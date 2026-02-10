@@ -1,0 +1,31 @@
+# Rust
+/target
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Configuration (contains private keys!)
+purl.toml
+*.toml
+!purl.toml.example
+!Cargo.toml
+
+# Build artifacts
+purl
+*.tar.gz
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+
+.env*

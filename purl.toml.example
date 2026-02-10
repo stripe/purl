@@ -1,0 +1,15 @@
+# Example purl configuration file
+# Copy this to ~/.purl/config.toml and update paths to your keystores.
+# Alternatively, run `purl wallet add` to create this file automatically.
+
+# EVM configuration (for Ethereum, Base, Avalanche, etc.)
+[evm]
+# Path to your encrypted EVM keystore file
+# Create one with: purl wallet add --type evm
+keystore = "/path/to/evm-keystore.json"
+
+# Solana configuration
+[solana]
+# Path to your encrypted Solana keystore file
+# Create one with: purl wallet add --type solana
+keystore = "/path/to/solana-keystore.json"

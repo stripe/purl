@@ -1,0 +1,50 @@
+[package]
+name = "purl"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "CLI for making x402 payment-enabled HTTP requests"
+keywords = ["x402", "payments", "crypto", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "purl"
+path = "src/main.rs"
+
+[dependencies]
+purl-lib = { path = "../lib" }
+clap = { version = "4.5", features = ["derive", "env", "color"] }
+clap_complete = "4.5"
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+toml.workspace = true
+base64.workspace = true
+tokio.workspace = true
+bs58.workspace = true
+dialoguer = "0.12"
+hex.workspace = true
+rand.workspace = true
+colored = "3.0"
+http = "1.0"
+alloy-signer-local.workspace = true
+alloy.workspace = true
+alloy-provider = { workspace = true, features = ["reqwest"] }
+alloy-transport-http = { workspace = true, features = ["reqwest"] }
+solana-client.workspace = true
+solana-sdk.workspace = true
+spl-associated-token-account.workspace = true
+futures = "0.3.31"
+ctrlc = "3.4"
+
+[dev-dependencies]
+assert_cmd = "2.1"
+predicates = "3.1"
+tempfile = "3.24"
+serial_test = "3.2"
+secp256k1 = "0.30"
+sha3.workspace = true

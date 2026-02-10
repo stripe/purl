@@ -1,0 +1,270 @@
+//! Library API - high-level client for making x402 payment-enabled requests
+
+use crate::config::Config;
+use crate::error::{PurlError, Result};
+use crate::http::{HttpClient, HttpClientBuilder, HttpResponse};
+use crate::negotiator::PaymentNegotiator;
+use crate::payment_provider::PROVIDER_REGISTRY;
+use crate::x402::SettlementResponse;
+use base64::Engine;
+
+/// Builder for making x402-enabled HTTP requests.
+///
+/// This is the main entry point for making HTTP requests with automatic x402 payment handling.
+/// Requests that return a 402 Payment Required status will automatically negotiate payment
+/// requirements and submit payment before retrying the request.
+///
+/// # Example
+/// ```no_run
+/// # use purl_lib::{PurlClient, Config};
+/// # async fn example() -> purl_lib::Result<()> {
+/// let client = PurlClient::new()?
+///     .max_amount("1000000")
+///     .verbose();
+///
+/// let result = client.get("https://api.example.com/data").await?;
+/// # Ok(())
+/// # }
+/// ```
+pub struct PurlClient {
+    config: Config,
+    max_amount: Option<String>,
+    allowed_networks: Vec<String>,
+    headers: Vec<(String, String)>,
+    timeout: Option<u64>,
+    follow_redirects: bool,
+    user_agent: Option<String>,
+    verbose: bool,
+    dry_run: bool,
+}
+
+impl PurlClient {
+    /// Create a new PurlClient by loading configuration from the default location.
+    ///
+    /// This loads the config from `~/.purl/config.toml`.
+    ///
+    /// # Errors
+    /// Returns an error if the config file cannot be found or parsed.
+    pub fn new() -> Result<Self> {
+        let config = Config::load()?;
+        Ok(Self::with_config(config))
+    }
+
+    /// Create a new PurlClient with the provided configuration.
+    ///
+    /// Use this when you want to provide configuration programmatically
+    /// rather than loading it from a file.
+    ///
+    /// # Example
+    /// ```no_run
+    /// # use purl_lib::{PurlClient, Config, EvmConfig};
+    /// # use std::path::PathBuf;
+    /// let config = Config {
+    ///     evm: Some(EvmConfig {
+    ///         keystore: Some(PathBuf::from("/path/to/keystore.json")),
+    ///     }),
+    ///     solana: None,
+    ///     ..Default::default()
+    /// };
+    /// let client = PurlClient::with_config(config);
+    /// ```
+    pub fn with_config(config: Config) -> Self {
+        Self {
+            config,
+            max_amount: None,
+            allowed_networks: Vec::new(),
+            headers: Vec::new(),
+            timeout: None,
+            follow_redirects: false,
+            user_agent: None,
+            verbose: false,
+            dry_run: false,
+        }
+    }
+
+    /// Set the maximum amount (in token base units) willing to pay.
+    ///
+    /// If a payment request exceeds this amount, the request will fail
+    /// with an `AmountExceedsMax` error.
+    #[must_use]
+    pub fn max_amount(mut self, amount: impl Into<String>) -> Self {
+        self.max_amount = Some(amount.into());
+        self
+    }
+
+    /// Restrict payments to only these networks.
+    ///
+    /// If specified, only payment requirements for these networks will be considered.
+    /// Pass an empty slice to allow all networks.
+    #[must_use]
+    pub fn allowed_networks(mut self, networks: &[&str]) -> Self {
+        self.allowed_networks = networks.iter().map(|s| s.to_string()).collect();
+        self
+    }
+
+    /// Add a custom HTTP header to all requests.
+    ///
+    /// Can be called multiple times to add multiple headers.
+    #[must_use]
+    pub fn header(mut self, name: impl Into<String>, value: impl Into<String>) -> Self {
+        self.headers.push((name.into(), value.into()));
+        self
+    }
+
+    /// Set the HTTP request timeout in seconds.
+    #[must_use]
+    pub fn timeout(mut self, seconds: u64) -> Self {
+        self.timeout = Some(seconds);
+        self
+    }
+
+    /// Enable automatic following of HTTP redirects.
+    #[must_use]
+    pub fn follow_redirects(mut self) -> Self {
+        self.follow_redirects = true;
+        self
+    }
+
+    /// Set a custom User-Agent header.
+    #[must_use]
+    pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
+        self.user_agent = Some(ua.into());
+        self
+    }
+
+    /// Enable verbose output for debugging.
+    #[must_use]
+    pub fn verbose(mut self) -> Self {
+        self.verbose = true;
+        self
+    }
+
+    /// Enable dry-run mode.
+    ///
+    /// In dry-run mode, payment requirements are negotiated but no actual
+    /// payment is made. Returns `PaymentResult::DryRun` with payment details.
+    #[must_use]
+    pub fn dry_run(mut self) -> Self {
+        self.dry_run = true;
+        self
+    }
+
+    /// Perform a GET request to the specified URL.
+    ///
+    /// If the server responds with 402 Payment Required, payment will be
+    /// automatically negotiated and submitted before retrying the request.
+    pub async fn get(&self, url: &str) -> Result<PaymentResult> {
+        self.request("GET", url, None).await
+    }
+
+    /// Perform a POST request to the specified URL with optional body data.
+    ///
+    /// If the server responds with 402 Payment Required, payment will be
+    /// automatically negotiated and submitted before retrying the request.
+    pub async fn post(&self, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
+        self.request("POST", url, data).await
+    }
+
+    /// Configure a new HttpClient with the common settings
+    fn configure_client(&self, additional_headers: &[(String, String)]) -> Result<HttpClient> {
+        let mut builder = HttpClientBuilder::new()
+            .verbose(self.verbose)
+            .follow_redirects(self.follow_redirects)
+            .headers(&self.headers)
+            .headers(additional_headers);
+
+        if let Some(timeout) = self.timeout {
+            builder = builder.timeout(timeout);
+        }
+
+        if let Some(ref ua) = self.user_agent {
+            builder = builder.user_agent(ua);
+        }
+
+        builder.build()
+    }
+
+    /// Execute an HTTP request with the configured method and data
+    fn execute_request(
+        &self,
+        client: &mut HttpClient,
+        method: &str,
+        url: &str,
+        data: Option<&[u8]>,
+    ) -> Result<HttpResponse> {
+        match method {
+            "GET" => client.get(url),
+            "POST" => client.post(url, data),
+            _ => Err(PurlError::UnsupportedHttpMethod(method.to_string())),
+        }
+    }
+
+    async fn request(&self, method: &str, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
+        let mut client = self.configure_client(&[])?;
+        let response = self.execute_request(&mut client, method, url, data)?;
+
+        if !response.is_payment_required() {
+            return Ok(PaymentResult::Success(response));
+        }
+
+        let json = response.payment_requirements_json()?;
+        let negotiator = PaymentNegotiator::new(&self.config)
+            .with_allowed_networks(&self.allowed_networks)
+            .with_max_amount(self.max_amount.as_deref());
+
+        let selected = negotiator.select_requirement(&json)?;
+
+        if self.dry_run {
+            if let Some(provider) = PROVIDER_REGISTRY.find_provider(selected.network()) {
+                let dry_run_info = provider.dry_run(&selected, &self.config)?;
+                return Ok(PaymentResult::DryRun(dry_run_info));
+            }
+        }
+
+        let provider = PROVIDER_REGISTRY
+            .find_provider(selected.network())
+            .ok_or_else(|| PurlError::ProviderNotFound(selected.network().to_string()))?;
+
+        let payment_payload = provider.create_payment(&selected, &self.config).await?;
+
+        let payload_json = serde_json::to_string(&payment_payload)?;
+        let encoded_payload = base64::engine::general_purpose::STANDARD.encode(payload_json);
+
+        // Use version-appropriate header name
+        let header_name = payment_payload.payment_header_name();
+        let payment_header = vec![(header_name.to_string(), encoded_payload)];
+        let mut client = self.configure_client(&payment_header)?;
+        let response = self.execute_request(&mut client, method, url, data)?;
+
+        // Check both v1 and v2 response headers
+        let response_header_name = payment_payload.response_header_name();
+        let settlement = if let Some(header) = response.get_header(response_header_name) {
+            let decoded = base64::engine::general_purpose::STANDARD.decode(header)?;
+            let settlement: SettlementResponse = serde_json::from_slice(&decoded)?;
+            Some(settlement)
+        } else {
+            None
+        };
+
+        Ok(PaymentResult::Paid {
+            response,
+            settlement,
+        })
+    }
+}
+
+/// The result of an HTTP request that may have required payment.
+#[derive(Debug)]
+pub enum PaymentResult {
+    Success(HttpResponse),
+    Paid {
+        response: HttpResponse,
+        settlement: Option<SettlementResponse>,
+    },
+
+    /// Dry-run mode was enabled, so payment was not actually made.
+    ///
+    /// Contains information about what payment would have been made,
+    /// including amount, asset, sender, recipient, and any warnings.
+    DryRun(crate::payment_provider::DryRunInfo),
+}
