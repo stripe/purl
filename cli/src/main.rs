@@ -193,8 +193,23 @@ async fn make_request(cli: Cli) -> Result<()> {
 
     let response = handle_payment_request(&config, &request_ctx, url, requirements).await?;
 
-    // If still 402 after payment attempt, don't print empty body
+    // If still 402 after payment attempt, check for specific error codes
     if response.is_payment_required() {
+        if let Ok(json) = response.payment_requirements_json() {
+            if let Ok(requirements) =
+                serde_json::from_str::<purl_lib::PaymentRequirementsResponse>(&json)
+            {
+                if let Some(error_msg) = requirements.error() {
+                    if error_msg == "insufficient_funds" {
+                        return Err(purl_lib::PurlError::InsufficientBalance {
+                            message: error_msg.to_string(),
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+
         anyhow::bail!("Payment was not accepted by the server");
     }
 

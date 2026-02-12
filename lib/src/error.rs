@@ -22,6 +22,10 @@ pub enum PurlError {
     #[error("Required amount ({required}) exceeds maximum allowed ({max})")]
     AmountExceedsMax { required: u128, max: u128 },
 
+    /// Insufficient balance to complete payment
+    #[error("Insufficient balance to complete payment")]
+    InsufficientBalance { message: String },
+
     /// Invalid payment amount format
     #[error("Invalid amount: {0}")]
     InvalidAmount(String),

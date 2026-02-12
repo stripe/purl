@@ -88,6 +88,12 @@ fn get_purl_error_suggestion(err: &PurlError) -> Option<String> {
              Increase with --max-amount or remove the limit."
         )),
 
+        PurlError::InsufficientBalance { message: _ } => Some(
+            "The payment was rejected due to insufficient balance.\n\
+             Check your balance with 'purl balance' and add funds to your wallet."
+                .to_string(),
+        ),
+
         PurlError::UnknownNetwork(network) => Some(format!(
             "Network '{network}' is not recognized.\n\
              Run 'purl networks list' to see available networks.\n\
@@ -170,6 +176,11 @@ fn get_related_commands(err: &anyhow::Error) -> Option<Vec<&'static str>> {
             PurlError::AmountExceedsMax { .. } => Some(vec![
                 "purl inspect <url>     # Check payment requirements",
                 "purl balance           # Check your balance",
+            ]),
+            PurlError::InsufficientBalance { .. } => Some(vec![
+                "purl balance           # Check your wallet balance",
+                "purl inspect <url>     # View payment requirements",
+                "purl wallet list       # List configured wallets",
             ]),
             PurlError::UnknownNetwork(_) => {
                 Some(vec!["purl networks list     # See available networks"])
