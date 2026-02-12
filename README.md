@@ -4,6 +4,21 @@ A curl-esque CLI for making HTTP requests that require payment. Designed for hum
 
 ## Installation
 
+### Homebrew (macOS/Linux)
+
+```bash
+brew install stripe/purl/purl
+```
+
+Or tap first:
+
+```bash
+brew tap stripe/purl
+brew install purl
+```
+
+### From Source
+
 ```bash
 git clone https://github.com/stripe/purl
 cd purl
