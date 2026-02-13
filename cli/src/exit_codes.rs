@@ -163,7 +163,11 @@ mod tests {
         );
         assert_eq!(
             ExitCode::from(&PurlError::InsufficientBalance {
-                message: "test".into()
+                message: "test".into(),
+                required: None,
+                balance: None,
+                asset: None,
+                network: None,
             }),
             ExitCode::InsufficientFunds
         );

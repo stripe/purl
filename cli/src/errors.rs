@@ -88,11 +88,68 @@ fn get_purl_error_suggestion(err: &PurlError) -> Option<String> {
              Increase with --max-amount or remove the limit."
         )),
 
-        PurlError::InsufficientBalance { message: _ } => Some(
-            "The payment was rejected due to insufficient balance.\n\
-             Check your balance with 'purl balance' and add funds to your wallet."
-                .to_string(),
-        ),
+        PurlError::InsufficientBalance {
+            message: _,
+            required,
+            balance,
+            asset,
+            network,
+        } => {
+            // Build the main error message with token and network info
+            let mut msg = match (asset.as_deref(), network.as_deref()) {
+                (Some(token), Some(net)) => {
+                    format!("The payment was rejected due to insufficient {} balance on {}.", token, net)
+                }
+                (Some(token), None) => {
+                    format!("The payment was rejected due to insufficient {} balance.", token)
+                }
+                (None, Some(net)) => {
+                    format!("The payment was rejected due to insufficient balance on {}.", net)
+                }
+                (None, None) => {
+                    "The payment was rejected due to insufficient balance.".to_string()
+                }
+            };
+
+            // Add details if available
+            match (required, balance, asset.as_deref()) {
+                (Some(req), Some(bal), Some(asset_sym)) => {
+                    msg.push_str(&format!(
+                        "\n\nRequired: {} {}\nYour balance: {} {}",
+                        req, asset_sym, bal, asset_sym
+                    ));
+                }
+                (Some(req), Some(bal), None) => {
+                    // Have both amounts but no asset symbol - use generic "tokens"
+                    msg.push_str(&format!(
+                        "\n\nRequired: {} tokens\nYour balance: {} tokens",
+                        req, bal
+                    ));
+                }
+                (Some(req), None, Some(asset_sym)) => {
+                    // Have required amount but couldn't fetch balance
+                    msg.push_str(&format!("\n\nRequired: {} {}", req, asset_sym));
+                }
+                (Some(req), None, None) => {
+                    // Have required amount but no asset symbol
+                    msg.push_str(&format!("\n\nRequired: {} tokens", req));
+                }
+                (None, Some(bal), Some(asset_sym)) => {
+                    // Have balance but no required amount
+                    msg.push_str(&format!("\n\nYour balance: {} {}", bal, asset_sym));
+                }
+                (None, Some(bal), None) => {
+                    // Have balance but no asset symbol
+                    msg.push_str(&format!("\n\nYour balance: {} tokens", bal));
+                }
+                _ => {
+                    // Not enough info to show details
+                }
+            }
+
+            msg.push_str("\n\nCheck your balance with 'purl balance' and add funds to your wallet.");
+            Some(msg)
+        }
 
         PurlError::UnknownNetwork(network) => Some(format!(
             "Network '{network}' is not recognized.\n\

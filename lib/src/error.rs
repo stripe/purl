@@ -24,7 +24,13 @@ pub enum PurlError {
 
     /// Insufficient balance to complete payment
     #[error("Insufficient balance to complete payment")]
-    InsufficientBalance { message: String },
+    InsufficientBalance {
+        message: String,
+        required: Option<String>,
+        balance: Option<String>,
+        asset: Option<String>,
+        network: Option<String>,
+    },
 
     /// Invalid payment amount format
     #[error("Invalid amount: {0}")]
