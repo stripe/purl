@@ -98,17 +98,24 @@ fn get_purl_error_suggestion(err: &PurlError) -> Option<String> {
             // Build the main error message with token and network info
             let mut msg = match (asset.as_deref(), network.as_deref()) {
                 (Some(token), Some(net)) => {
-                    format!("The payment was rejected due to insufficient {} balance on {}.", token, net)
+                    format!(
+                        "The payment was rejected due to insufficient {} balance on {}.",
+                        token, net
+                    )
                 }
                 (Some(token), None) => {
-                    format!("The payment was rejected due to insufficient {} balance.", token)
+                    format!(
+                        "The payment was rejected due to insufficient {} balance.",
+                        token
+                    )
                 }
                 (None, Some(net)) => {
-                    format!("The payment was rejected due to insufficient balance on {}.", net)
+                    format!(
+                        "The payment was rejected due to insufficient balance on {}.",
+                        net
+                    )
                 }
-                (None, None) => {
-                    "The payment was rejected due to insufficient balance.".to_string()
-                }
+                (None, None) => "The payment was rejected due to insufficient balance.".to_string(),
             };
 
             // Add details if available
@@ -147,7 +154,9 @@ fn get_purl_error_suggestion(err: &PurlError) -> Option<String> {
                 }
             }
 
-            msg.push_str("\n\nCheck your balance with 'purl balance' and add funds to your wallet.");
+            msg.push_str(
+                "\n\nCheck your balance with 'purl balance' and add funds to your wallet.",
+            );
             Some(msg)
         }
 

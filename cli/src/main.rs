@@ -202,37 +202,43 @@ async fn make_request(cli: Cli) -> Result<()> {
             {
                 if let Some(error_msg) = requirements.error() {
                     if error_msg == "insufficient_funds" {
-                        let (required, balance, asset, network) = if let Some(req) = requirements.accepts().first()
-                        {
-                            let network_str = req.network().to_string();
-                            let asset_str = req.asset().to_string();
+                        let (required, balance, asset, network) =
+                            if let Some(req) = requirements.accepts().first() {
+                                let network_str = req.network().to_string();
+                                let asset_str = req.asset().to_string();
 
-                            let required_amount = if let Ok(amt) = req.parse_max_amount() {
-                                Some(format_amount_human(amt.as_atomic_units(), &network_str, &asset_str))
+                                let required_amount = if let Ok(amt) = req.parse_max_amount() {
+                                    Some(format_amount_human(
+                                        amt.as_atomic_units(),
+                                        &network_str,
+                                        &asset_str,
+                                    ))
+                                } else {
+                                    Some("Unspecified amount".to_string())
+                                };
+
+                                let balance_str =
+                                    get_user_balance(&config, &network_str, &asset_str).await;
+
+                                let symbol = get_token_symbol(&network_str, &asset_str);
+
+                                let canonical_network =
+                                    purl_lib::network::resolve_network_alias(&network_str);
+                                let network_display = if canonical_network.is_empty() {
+                                    network_str.clone()
+                                } else {
+                                    canonical_network.to_string()
+                                };
+
+                                (
+                                    required_amount,
+                                    balance_str,
+                                    Some(symbol),
+                                    Some(network_display),
+                                )
                             } else {
-                                Some("Unspecified amount".to_string())
+                                (None, None, None, None)
                             };
-
-                            let balance_str = get_user_balance(&config, &network_str, &asset_str).await;
-
-                            let symbol = get_token_symbol(&network_str, &asset_str);
-
-                            let canonical_network = purl_lib::network::resolve_network_alias(&network_str);
-                            let network_display = if canonical_network.is_empty() {
-                                network_str.clone()
-                            } else {
-                                canonical_network.to_string()
-                            };
-
-                            (
-                                required_amount,
-                                balance_str,
-                                Some(symbol),
-                                Some(network_display),
-                            )
-                        } else {
-                            (None, None, None, None)
-                        };
 
                         return Err(purl_lib::PurlError::InsufficientBalance {
                             message: error_msg.to_string(),
