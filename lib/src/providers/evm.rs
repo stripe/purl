@@ -86,35 +86,30 @@ impl PaymentProvider for EvmProvider {
         let valid_after = U256::from(now.saturating_sub(600));
         let valid_before = U256::from(now + requirements.max_timeout_seconds());
 
-        let amount = requirements.parse_max_amount().map_err(|e| {
-            PurlError::InvalidAmount(format!("Failed to parse maxAmountRequired: {e}"))
+        let amount = requirements.parse_max_amount().map_err(|_| {
+            PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
         })?;
         let value = U256::from(amount.as_atomic_units());
 
         let from = signer.address();
-        let to = Address::from_str(requirements.pay_to()).map_err(|e| {
-            PurlError::invalid_address(format!("Failed to parse payTo address: {e}"))
+        let to = Address::from_str(requirements.pay_to()).map_err(|_| {
+            PurlError::invalid_address(
+                "The server provided an invalid recipient address.".to_string(),
+            )
         })?;
 
         let _ = crate::constants::get_token_decimals(requirements.network(), requirements.asset())?;
 
         let (token_name, token_version) = requirements.evm_token_metadata().ok_or_else(|| {
-            PurlError::MissingRequirement(
-                "EVM payments require token name and version in extra field for EIP-712 signing"
-                    .to_string(),
-            )
+            PurlError::MissingRequirement("token metadata (name and version)".to_string())
         })?;
 
-        let verifying_contract = Address::from_str(requirements.asset()).map_err(|e| {
-            PurlError::invalid_address(format!("Failed to parse asset address: {e}"))
+        let verifying_contract = Address::from_str(requirements.asset()).map_err(|_| {
+            PurlError::invalid_address("The server provided an invalid token address.".to_string())
         })?;
 
-        let chain_id = get_evm_chain_id(requirements.network()).ok_or_else(|| {
-            PurlError::UnknownNetwork(format!(
-                "Failed to get chain ID for network: {}",
-                requirements.network()
-            ))
-        })?;
+        let chain_id = get_evm_chain_id(requirements.network())
+            .ok_or_else(|| PurlError::UnknownNetwork(requirements.network().to_string()))?;
 
         let authorization = TransferWithAuthorization {
             from,
@@ -134,9 +129,9 @@ impl PaymentProvider for EvmProvider {
 
         let signing_hash = authorization.eip712_signing_hash(&domain);
 
-        let signature = signer
-            .sign_hash_sync(&signing_hash)
-            .map_err(|e| PurlError::signing(format!("Failed to sign EIP-712 message: {e}")))?;
+        let signature = signer.sign_hash_sync(&signing_hash).map_err(|_| {
+            PurlError::signing("Could not sign the payment with your wallet.".to_string())
+        })?;
 
         let evm_payload = EvmPayload {
             signature: signature.to_string(),
@@ -178,9 +173,9 @@ impl PaymentProvider for EvmProvider {
     fn dry_run(&self, requirements: &PaymentRequirements, config: &Config) -> Result<DryRunInfo> {
         let evm_config = config.require_evm()?;
 
-        let amount = requirements
-            .parse_max_amount()
-            .map_err(|e| PurlError::InvalidAmount(format!("Failed to parse max amount: {e}")))?;
+        let amount = requirements.parse_max_amount().map_err(|_| {
+            PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
+        })?;
 
         Ok(DryRunInfo {
             provider: PROVIDER_NAME.to_owned(),
@@ -212,23 +207,27 @@ impl PaymentProvider for EvmProvider {
 
         let token_config = network.usdc_config().ok_or_else(|| {
             PurlError::UnsupportedToken(format!(
-                "Network {} does not support {}",
-                network, currency.symbol
+                "{} is not supported on {}. Run `purl networks info {}` to see supported tokens.",
+                currency.symbol, network, network
             ))
         })?;
 
         let network_info = network.info();
         let provider =
-            ProviderBuilder::new().connect_http(network_info.rpc_url.parse().map_err(|e| {
-                PurlError::InvalidConfig(format!("Invalid RPC URL for {network}: {e}"))
+            ProviderBuilder::new().connect_http(network_info.rpc_url.parse().map_err(|_| {
+                PurlError::InvalidConfig(format!(
+                    "Invalid network configuration for {}. This is an internal error.",
+                    network
+                ))
             })?);
 
-        let user_addr = Address::from_str(address)
-            .map_err(|e| PurlError::invalid_address(format!("Invalid Ethereum address: {e}")))?;
-        let token_addr = Address::from_str(token_config.address).map_err(|e| {
+        let user_addr = Address::from_str(address).map_err(|_| {
+            PurlError::invalid_address(format!("Invalid Ethereum address: {}", address))
+        })?;
+        let token_addr = Address::from_str(token_config.address).map_err(|_| {
             PurlError::invalid_address(format!(
-                "Invalid {} contract address for {}: {}",
-                token_config.currency.symbol, network, e
+                "Invalid {} token configuration for {}. This is an internal error.",
+                token_config.currency.symbol, network
             ))
         })?;
 
@@ -236,8 +235,8 @@ impl PaymentProvider for EvmProvider {
 
         let balance = contract.balanceOf(user_addr).call().await.map_err(|e| {
             PurlError::BalanceQuery(format!(
-                "Failed to get {} balance for {} on {}: {}",
-                token_config.currency.symbol, address, network, e
+                "Could not fetch balance from {}. The network may be unavailable: {}",
+                network, e
             ))
         })?;
 
