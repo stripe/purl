@@ -11,7 +11,7 @@ mod protocol;
 pub mod v1;
 pub mod v2;
 
-pub use protocol::X402Protocol;
+pub use protocol::{X402Protocol, PROTOCOL_NAME};
 
 // ==================== Payment Header Constants ====================
 

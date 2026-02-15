@@ -42,11 +42,11 @@ pub trait PaymentProtocol: Send + Sync {
     /// Get the protocol name for logging/debugging
     fn name(&self) -> &str;
 
-    /// Detect if this protocol should handle the response.
+    /// Determine if this protocol should handle the response.
     ///
     /// Called on 402 responses to determine which protocol to use.
     /// Should check for protocol-specific headers or body markers.
-    fn detect(&self, response: &HttpResponse) -> bool;
+    fn should_handle(&self, response: &HttpResponse) -> bool;
 
     /// Parse the payment challenge from the 402 response.
     ///

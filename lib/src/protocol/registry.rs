@@ -1,5 +1,7 @@
 //! Protocol registry for detecting and managing payment protocols.
 
+use std::collections::HashMap;
+
 use super::PaymentProtocol;
 use crate::http::HttpResponse;
 use once_cell::sync::Lazy;
@@ -9,14 +11,14 @@ use once_cell::sync::Lazy;
 /// The registry holds all available protocol implementations and provides
 /// methods for detecting which protocol to use for a given HTTP response.
 pub struct ProtocolRegistry {
-    protocols: Vec<Box<dyn PaymentProtocol>>,
+    protocols: HashMap<String, Box<dyn PaymentProtocol>>,
 }
 
 impl ProtocolRegistry {
     /// Create a new empty registry
     pub fn new() -> Self {
         Self {
-            protocols: Vec::new(),
+            protocols: HashMap::new(),
         }
     }
 
@@ -29,31 +31,29 @@ impl ProtocolRegistry {
 
     /// Register a protocol implementation
     pub fn register(&mut self, protocol: Box<dyn PaymentProtocol>) {
-        self.protocols.push(protocol);
+        let name = protocol.name().to_string();
+        self.protocols.insert(name, protocol);
     }
 
-    /// Detect which protocol should handle the response.
+    /// Find which protocol should handle the response.
     ///
-    /// Returns the first protocol whose `detect()` method returns true,
+    /// Returns the first protocol whose `should_handle()` method returns true,
     /// or None if no protocol matches.
-    pub fn detect(&self, response: &HttpResponse) -> Option<&dyn PaymentProtocol> {
+    pub fn find_handler(&self, response: &HttpResponse) -> Option<&dyn PaymentProtocol> {
         self.protocols
-            .iter()
-            .find(|p| p.detect(response))
+            .values()
+            .find(|p| p.should_handle(response))
             .map(|p| p.as_ref())
     }
 
     /// Get a protocol by name
     pub fn get(&self, name: &str) -> Option<&dyn PaymentProtocol> {
-        self.protocols
-            .iter()
-            .find(|p| p.name() == name)
-            .map(|p| p.as_ref())
+        self.protocols.get(name).map(|p| p.as_ref())
     }
 
     /// List all registered protocol names
     pub fn protocol_names(&self) -> Vec<&str> {
-        self.protocols.iter().map(|p| p.name()).collect()
+        self.protocols.keys().map(|s| s.as_str()).collect()
     }
 }
 
@@ -86,23 +86,25 @@ mod tests {
     #[test]
     fn test_registry_default_has_x402() {
         let registry = ProtocolRegistry::with_defaults();
-        assert!(registry.get("x402").is_some());
-        assert_eq!(registry.protocol_names(), vec!["x402"]);
+        assert!(registry.get(crate::x402::PROTOCOL_NAME).is_some());
+        let names = registry.protocol_names();
+        assert_eq!(names.len(), 1);
+        assert!(names.contains(&crate::x402::PROTOCOL_NAME));
     }
 
     #[test]
-    fn test_registry_detect_x402_v1() {
+    fn test_registry_find_handler_x402_v1() {
         let registry = ProtocolRegistry::with_defaults();
         let body = r#"{"x402Version": 1, "error": "Payment Required", "accepts": []}"#;
         let response = make_response(402, vec![], body);
 
-        let protocol = registry.detect(&response);
+        let protocol = registry.find_handler(&response);
         assert!(protocol.is_some());
-        assert_eq!(protocol.unwrap().name(), "x402");
+        assert_eq!(protocol.unwrap().name(), crate::x402::PROTOCOL_NAME);
     }
 
     #[test]
-    fn test_registry_detect_x402_v2() {
+    fn test_registry_find_handler_x402_v2() {
         let registry = ProtocolRegistry::with_defaults();
         let response = make_response(
             402,
@@ -110,31 +112,31 @@ mod tests {
             "",
         );
 
-        let protocol = registry.detect(&response);
+        let protocol = registry.find_handler(&response);
         assert!(protocol.is_some());
-        assert_eq!(protocol.unwrap().name(), "x402");
+        assert_eq!(protocol.unwrap().name(), crate::x402::PROTOCOL_NAME);
     }
 
     #[test]
-    fn test_registry_detect_non_payment_response() {
+    fn test_registry_find_handler_non_payment_response() {
         let registry = ProtocolRegistry::with_defaults();
         let response = make_response(200, vec![], "OK");
 
-        let protocol = registry.detect(&response);
+        let protocol = registry.find_handler(&response);
         assert!(protocol.is_none());
     }
 
     #[test]
-    fn test_registry_detect_unknown_402() {
+    fn test_registry_find_handler_unknown_402() {
         let registry = ProtocolRegistry::with_defaults();
         let response = make_response(402, vec![], "Payment required");
 
-        let protocol = registry.detect(&response);
+        let protocol = registry.find_handler(&response);
         assert!(protocol.is_none());
     }
 
     #[test]
     fn test_global_protocol_registry() {
-        assert!(PROTOCOL_REGISTRY.get("x402").is_some());
+        assert!(PROTOCOL_REGISTRY.get(crate::x402::PROTOCOL_NAME).is_some());
     }
 }

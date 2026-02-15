@@ -12,6 +12,9 @@ use super::{
     V1_X_PAYMENT_HEADER, V1_X_PAYMENT_RESPONSE_HEADER,
 };
 
+/// Protocol name constant for x402
+pub const PROTOCOL_NAME: &str = "x402";
+
 /// X402 protocol implementation.
 ///
 /// Supports both v1 and v2 of the x402 payment protocol:
@@ -21,10 +24,10 @@ pub struct X402Protocol;
 
 impl PaymentProtocol for X402Protocol {
     fn name(&self) -> &str {
-        "x402"
+        PROTOCOL_NAME
     }
 
-    fn detect(&self, response: &HttpResponse) -> bool {
+    fn should_handle(&self, response: &HttpResponse) -> bool {
         if response.status_code != 402 {
             return false;
         }
@@ -97,36 +100,36 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_v1_response() {
+    fn test_should_handle_v1_response() {
         let protocol = X402Protocol;
         let body = r#"{"x402Version": 1, "error": "Payment Required", "accepts": []}"#;
         let response = make_response(402, vec![], body);
-        assert!(protocol.detect(&response));
+        assert!(protocol.should_handle(&response));
     }
 
     #[test]
-    fn test_detect_v2_response() {
+    fn test_should_handle_v2_response() {
         let protocol = X402Protocol;
         let response = make_response(
             402,
             vec![("payment-required", "eyJ4NDAyVmVyc2lvbiI6Mn0=")],
             "",
         );
-        assert!(protocol.detect(&response));
+        assert!(protocol.should_handle(&response));
     }
 
     #[test]
-    fn test_detect_non_402() {
+    fn test_should_handle_non_402() {
         let protocol = X402Protocol;
         let response = make_response(200, vec![], r#"{"x402Version": 1}"#);
-        assert!(!protocol.detect(&response));
+        assert!(!protocol.should_handle(&response));
     }
 
     #[test]
-    fn test_detect_non_x402_402() {
+    fn test_should_handle_non_x402_402() {
         let protocol = X402Protocol;
         let response = make_response(402, vec![], "Payment required");
-        assert!(!protocol.detect(&response));
+        assert!(!protocol.should_handle(&response));
     }
 
     #[test]
