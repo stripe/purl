@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use purl_lib::{HttpClientBuilder, HttpMethod, PaymentMethod, PaymentRequirementsResponse};
 use serde::Serialize;
+use std::borrow::Cow;
 
 use crate::cli::{Cli, OutputFormat};
 use crate::config_utils::load_config;
@@ -40,15 +41,17 @@ fn format_amount(atomic: &str, decimals: u8, symbol: &str) -> String {
     format_atomic_trimmed(atomic, decimals, symbol)
 }
 
-/// Get token symbol for a requirement
-fn get_token_symbol(requirement: &purl_lib::x402::PaymentRequirements) -> String {
-    if let Some(extra) = requirement.extra() {
-        if let Some(symbol) = extra.get("symbol").and_then(|s| s.as_str()) {
-            return symbol.to_string();
-        }
-    }
-
-    requirement.asset().to_string()
+/// Get token symbol and whether it came from seller-provided `extra["symbol"]` field
+fn get_token_symbol(requirement: &purl_lib::x402::PaymentRequirements) -> (String, bool) {
+    purl_lib::constants::get_token_symbol(requirement.network(), requirement.asset())
+        .map(|sym| (sym.to_string(), false))
+        .or_else(|| {
+            requirement
+                .extra()
+                .and_then(|e| e.get("symbol").and_then(|s| s.as_str()))
+                .map(|sym| (sym.to_string(), true))
+        })
+        .unwrap_or_else(|| (requirement.asset().to_string(), false))
 }
 
 /// Get decimals for a token on a network
@@ -122,17 +125,27 @@ fn build_inspect_output(
         .accepts()
         .iter()
         .map(|req| {
-            let symbol = get_token_symbol(req);
+            let (symbol, seller_provided) = get_token_symbol(req);
             let decimals = get_decimals(req.network(), req.asset()).ok();
             let amount_result = req.parse_max_amount();
             let amount_atomic = amount_result
                 .as_ref()
                 .map(|a| a.to_string())
                 .unwrap_or_else(|_| "invalid".to_string());
-            let amount_human = decimals.and_then(|dec| {
-                amount_result
-                    .ok()
-                    .map(|amt| format_amount(&amt.to_string(), dec, &symbol))
+            let amount_human = decimals.zip(amount_result.ok()).map(|(dec, amt)| {
+                format!(
+                    "{} ({})",
+                    format_amount(
+                        &amt.to_string(),
+                        dec,
+                        &(if seller_provided {
+                            Cow::Owned(format!("\"{}\"", symbol))
+                        } else {
+                            Cow::Borrowed(&symbol)
+                        }),
+                    ),
+                    purl_lib::network::resolve_network_alias(req.network())
+                )
             });
 
             AcceptedPaymentOption {
@@ -383,3 +396,6 @@ mod tests {
         assert_eq!(format_amount("0", 6, "USDC"), "0 USDC");
     }
 }
+
+#[cfg(test)]
+mod get_token_symbol_tests;

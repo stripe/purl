@@ -56,7 +56,7 @@ impl SolanaProvider {
 
         client
             .get_latest_blockhash()
-            .map_err(|e| PurlError::solana(format!("Failed to fetch recent blockhash: {e}")))
+            .map_err(|e| PurlError::solana(format!("Could not connect to Solana network: {e}")))
     }
 
     #[cfg(test)]
@@ -78,8 +78,12 @@ impl SolanaProvider {
         let password = config.password.as_deref();
         let keypair_bytes = crate::keystore::decrypt_solana_keystore(keystore_path, password)?;
 
-        Keypair::try_from(&keypair_bytes[..])
-            .map_err(|e| PurlError::solana(format!("Failed to create keypair: {e}")))
+        Keypair::try_from(&keypair_bytes[..]).map_err(|_| {
+            PurlError::solana(
+                "Your Solana wallet file appears to be corrupted. Try re-importing your wallet."
+                    .to_string(),
+            )
+        })
     }
 }
 
@@ -99,29 +103,35 @@ impl PaymentProvider for SolanaProvider {
         let keypair = Self::load_keypair(config)?;
 
         let source_pubkey = keypair.pubkey();
-        let destination_pubkey = Pubkey::from_str(requirements.pay_to()).map_err(|e| {
-            PurlError::invalid_address(format!("Failed to parse payTo address: {e}"))
+        let destination_pubkey = Pubkey::from_str(requirements.pay_to()).map_err(|_| {
+            PurlError::invalid_address(
+                "The server provided an invalid recipient address.".to_string(),
+            )
         })?;
-        let mint_pubkey = Pubkey::from_str(requirements.asset()).map_err(|e| {
-            PurlError::invalid_address(format!("Failed to parse asset address: {e}"))
+        let mint_pubkey = Pubkey::from_str(requirements.asset()).map_err(|_| {
+            PurlError::invalid_address("The server provided an invalid token address.".to_string())
         })?;
-        let fee_payer = requirements.solana_fee_payer().ok_or_else(|| {
-            PurlError::MissingRequirement("feePayer in payment requirements".to_string())
-        })?;
-        let fee_payer_pubkey = Pubkey::from_str(&fee_payer).map_err(|e| {
-            PurlError::invalid_address(format!("Failed to parse feePayer address: {e}"))
+        let fee_payer = requirements
+            .solana_fee_payer()
+            .ok_or_else(|| PurlError::MissingRequirement("feePayer".to_string()))?;
+        let fee_payer_pubkey = Pubkey::from_str(&fee_payer).map_err(|_| {
+            PurlError::invalid_address(
+                "The server provided an invalid fee payer address.".to_string(),
+            )
         })?;
 
-        let amount_parsed = requirements.parse_max_amount().map_err(|e| {
-            PurlError::InvalidAmount(format!("Failed to parse maxAmountRequired: {e}"))
+        let amount_parsed = requirements.parse_max_amount().map_err(|_| {
+            PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
         })?;
         let amount: u64 = amount_parsed
             .try_as_u64()
             .map_err(|e| PurlError::InvalidAmount(e.to_string()))?;
 
         let token_program_id = if let Some(program_str) = requirements.solana_token_program() {
-            Pubkey::from_str(&program_str).map_err(|e| {
-                PurlError::invalid_address(format!("Failed to parse token program: {e}"))
+            Pubkey::from_str(&program_str).map_err(|_| {
+                PurlError::invalid_address(
+                    "The server provided an invalid token program address.".to_string(),
+                )
             })?
         } else {
             spl_token::id()
@@ -158,10 +168,10 @@ impl PaymentProvider for SolanaProvider {
                 amount,
                 decimals,
             )
-            .map_err(|e| {
-                PurlError::solana(format!(
-                    "Failed to create Token-2022 transfer_checked instruction: {e:?}"
-                ))
+            .map_err(|_| {
+                PurlError::solana(
+                    "Could not create the payment transaction. You may need to receive this token first.".to_string()
+                )
             })?
         } else {
             spl_token::instruction::transfer_checked(
@@ -174,10 +184,10 @@ impl PaymentProvider for SolanaProvider {
                 amount,
                 decimals,
             )
-            .map_err(|e| {
-                PurlError::solana(format!(
-                    "Failed to create transfer_checked instruction: {e:?}"
-                ))
+            .map_err(|_| {
+                PurlError::solana(
+                    "Could not create the payment transaction. You may need to receive this token first.".to_string()
+                )
             })?
         };
 
@@ -191,8 +201,8 @@ impl PaymentProvider for SolanaProvider {
 
         transaction
             .try_partial_sign(&[&keypair], recent_blockhash)
-            .map_err(|e| {
-                PurlError::signing(format!("Failed to partially sign transaction: {e}"))
+            .map_err(|_| {
+                PurlError::signing("Could not sign the transaction with your wallet.".to_string())
             })?;
 
         let serialized = bincode::serialize(&transaction)?;
@@ -236,9 +246,9 @@ impl PaymentProvider for SolanaProvider {
             SPL_TOKEN_NAME
         };
 
-        let amount = requirements
-            .parse_max_amount()
-            .map_err(|e| PurlError::InvalidAmount(format!("Failed to parse max amount: {e}")))?;
+        let amount = requirements.parse_max_amount().map_err(|_| {
+            PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
+        })?;
 
         Ok(DryRunInfo {
             provider: format!("Solana ({token_program})"),
@@ -263,20 +273,21 @@ impl PaymentProvider for SolanaProvider {
     ) -> Result<NetworkBalance> {
         let token_config = network.usdc_config().ok_or_else(|| {
             PurlError::UnsupportedToken(format!(
-                "Network {} does not support {}",
-                network, currency.symbol
+                "{} is not supported on {}. Run `purl networks info {}` to see supported tokens.",
+                currency.symbol, network, network
             ))
         })?;
 
         let network_info = network.info();
         let client = RpcClient::new(network_info.rpc_url);
 
-        let owner_pubkey = Pubkey::from_str(address)
-            .map_err(|e| PurlError::invalid_address(format!("Invalid Solana public key: {e}")))?;
-        let token_mint = Pubkey::from_str(token_config.address).map_err(|e| {
+        let owner_pubkey = Pubkey::from_str(address).map_err(|_| {
+            PurlError::invalid_address(format!("Invalid Solana address: {}", address))
+        })?;
+        let token_mint = Pubkey::from_str(token_config.address).map_err(|_| {
             PurlError::invalid_address(format!(
-                "Invalid {} mint address for {}: {}",
-                token_config.currency.symbol, network, e
+                "Invalid {} token configuration for {}. This is an internal error.",
+                token_config.currency.symbol, network
             ))
         })?;
 

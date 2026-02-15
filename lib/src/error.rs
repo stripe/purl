@@ -7,19 +7,16 @@ pub type Result<T> = std::result::Result<T, PurlError>;
 
 #[derive(Error, Debug)]
 pub enum PurlError {
-    #[error("Payment provider not found for network: {0}")]
+    #[error("Network '{0}' is not supported. Run `purl networks list` to see available networks.")]
     ProviderNotFound(String),
 
-    /// No payment methods are configured
-    #[error("No payment methods configured")]
+    #[error("No wallet configured. Run `purl wallet create` to create a new wallet, or `purl wallet import` to import an existing one.")]
     NoPaymentMethods,
 
-    /// No compatible payment method for the server's requirements
-    #[error("No compatible payment method found. Available networks: {networks:?}")]
+    #[error("This payment requires a wallet for {networks:?}, but you don't have one configured. Run `purl wallet create` to add one.")]
     NoCompatibleMethod { networks: Vec<String> },
 
-    /// Required amount exceeds user's maximum allowed
-    #[error("Required amount ({required}) exceeds maximum allowed ({max})")]
+    #[error("Payment amount {required} exceeds your limit of {max}. Increase your limit with `--max-amount` or decline this payment.")]
     AmountExceedsMax { required: u128, max: u128 },
 
     /// Insufficient balance to complete payment
@@ -33,113 +30,87 @@ pub enum PurlError {
     },
 
     /// Invalid payment amount format
-    #[error("Invalid amount: {0}")]
+    #[error("Invalid amount '{0}'. Expected a numeric value.")]
     InvalidAmount(String),
 
-    /// Missing required payment field
-    #[error("Missing payment requirement: {0}")]
+    #[error("The server's payment request is missing required field: {0}")]
     MissingRequirement(String),
 
-    /// Configuration file or value is missing
-    #[error("Configuration missing: {0}")]
+    #[error("{0}")]
     ConfigMissing(String),
 
-    /// Configuration is invalid
-    #[error("Invalid configuration: {0}")]
+    #[error("{0}")]
     InvalidConfig(String),
 
-    /// Invalid private key format
-    #[error("Invalid private key: {0}")]
+    #[error("{0}")]
     InvalidKey(String),
 
-    /// Invalid password for keystore decryption
-    #[error("Invalid password")]
+    #[error("Incorrect wallet password. Please try again.")]
     InvalidPassword,
 
-    /// Failed to determine config directory
-    #[error("Failed to determine config directory")]
+    #[error("Could not find config directory. Set the PURL_CONFIG_DIR environment variable or ensure your home directory is accessible.")]
     NoConfigDir,
 
-    /// Unknown network identifier
-    #[error("Unknown network: {0}")]
+    #[error("Unknown network '{0}'. Run `purl networks list` to see supported networks.")]
     UnknownNetwork(String),
 
-    /// Token not configured for network
-    #[error("Token configuration not found for asset {asset} on network {network}")]
+    #[error("Token '{asset}' is not supported on {network}. Run `purl networks info {network}` to see supported tokens.")]
     TokenConfigNotFound { asset: String, network: String },
 
-    /// Unsupported token type
-    #[error("Unsupported token: {0}")]
+    #[error("{0}")]
     UnsupportedToken(String),
 
-    /// Balance query failed
-    #[error("Balance query failed: {0}")]
+    #[error("Could not check balance: {0}")]
     BalanceQuery(String),
 
     // ==================== HTTP Errors ====================
-    /// HTTP request/response error
-    #[error("HTTP error: {0}")]
+    #[error("{0}")]
     Http(String),
 
-    /// Unsupported HTTP method
-    #[error("Unsupported HTTP method: {0}")]
+    #[error("HTTP method '{0}' is not supported. Use GET or POST.")]
     UnsupportedHttpMethod(String),
 
-    /// EVM/Alloy signing error
-    #[error("Signing error: {0}")]
+    #[error("{0}")]
     Signing(String),
 
-    /// Address parsing error (EVM or Solana)
-    #[error("Invalid address: {0}")]
+    #[error("{0}")]
     InvalidAddress(String),
 
-    /// Solana-specific error
-    #[error("Solana error: {0}")]
+    #[error("{0}")]
     Solana(String),
 
-    /// JSON serialization/deserialization error
-    #[error("JSON error: {0}")]
+    #[error("Invalid JSON: {0}")]
     Json(#[from] serde_json::Error),
 
-    /// TOML parsing error
-    #[error("TOML parsing error: {0}")]
+    #[error("Invalid config file format: {0}")]
     TomlParse(#[from] toml::de::Error),
 
-    /// TOML serialization error
-    #[error("TOML serialization error: {0}")]
+    #[error("Failed to save config: {0}")]
     TomlSerialize(#[from] toml::ser::Error),
 
-    /// Hex decoding error
-    #[error("Hex decoding error: {0}")]
+    #[error("Invalid hex encoding: {0}")]
     HexDecode(#[from] hex::FromHexError),
 
-    /// Base64 decoding error
-    #[error("Base64 decoding error: {0}")]
+    #[error("Invalid base64 encoding: {0}")]
     Base64Decode(#[from] base64::DecodeError),
 
-    /// Base58 decoding error
-    #[error("Base58 decoding error: {0}")]
+    #[error("Invalid base58 encoding: {0}")]
     Base58Decode(#[from] bs58::decode::Error),
 
-    /// Bincode serialization error
-    #[error("Bincode error: {0}")]
+    #[error("Serialization error: {0}")]
     Bincode(#[from] bincode::Error),
 
     // ==================== External Library Errors ====================
-    /// IO error
-    #[error("IO error: {0}")]
+    #[error("File operation failed: {0}")]
     Io(#[from] std::io::Error),
 
-    /// Curl error
-    #[error("Curl error: {0}")]
+    #[error("Network request failed: {0}")]
     Curl(#[from] curl::Error),
 
-    /// Invalid UTF-8 in response
-    #[error("Invalid UTF-8 in response body")]
+    #[error("Server returned invalid text encoding. The response may be corrupted.")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),
 
-    /// System time error
-    #[error("System time error: {0}")]
+    #[error("System clock error: {0}")]
     SystemTime(#[from] std::time::SystemTimeError),
 }
 
