@@ -62,7 +62,7 @@ fn get_decimals(network: &str, asset: &str) -> Result<u8> {
 }
 
 /// Inspect payment requirements for a URL
-pub fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
+pub async fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
     let config = load_config(cli.config.as_ref())?;
 
     // Build HTTP client
@@ -84,7 +84,7 @@ pub fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
         eprintln!("Inspecting payment requirements for: {url}");
     }
 
-    let response = client.request(HttpMethod::Get, url, None)?;
+    let response = client.request(HttpMethod::Get, url, None).await?;
 
     if !response.is_payment_required() {
         anyhow::bail!(

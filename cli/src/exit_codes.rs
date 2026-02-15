@@ -118,7 +118,7 @@ impl From<&purl_lib::PurlError> for ExitCode {
             PurlError::ProviderNotFound(_)
             | PurlError::UnknownNetwork(_)
             | PurlError::Http(_)
-            | PurlError::Curl(_) => ExitCode::NetworkError,
+            | PurlError::Reqwest(_) => ExitCode::NetworkError,
 
             // Auth/signing errors
             PurlError::InvalidKey(_) | PurlError::Signing(_) | PurlError::InvalidAddress(_) => {

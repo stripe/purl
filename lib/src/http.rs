@@ -1,10 +1,10 @@
-//! HTTP client implementation using curl.
+//! HTTP client implementation using reqwest.
 
-use crate::error::Result;
-use curl::easy::{Easy2, Handler, WriteError};
+use crate::error::{PurlError, Result};
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
+use std::time::Duration;
 
 /// HTTP request methods.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -42,6 +42,20 @@ impl HttpMethod {
             self,
             HttpMethod::Post | HttpMethod::Put | HttpMethod::Patch | HttpMethod::Custom(_)
         )
+    }
+
+    fn to_reqwest(&self) -> Result<reqwest::Method> {
+        match self {
+            HttpMethod::Get => Ok(reqwest::Method::GET),
+            HttpMethod::Post => Ok(reqwest::Method::POST),
+            HttpMethod::Put => Ok(reqwest::Method::PUT),
+            HttpMethod::Patch => Ok(reqwest::Method::PATCH),
+            HttpMethod::Delete => Ok(reqwest::Method::DELETE),
+            HttpMethod::Head => Ok(reqwest::Method::HEAD),
+            HttpMethod::Options => Ok(reqwest::Method::OPTIONS),
+            HttpMethod::Custom(s) => reqwest::Method::from_bytes(s.as_bytes())
+                .map_err(|e| PurlError::Http(format!("invalid HTTP method '{}': {}", s, e))),
+        }
     }
 }
 
@@ -86,37 +100,6 @@ impl From<String> for HttpMethod {
     }
 }
 
-struct ResponseHandler {
-    data: Vec<u8>,
-    headers: HashMap<String, String>,
-}
-
-impl ResponseHandler {
-    fn new() -> Self {
-        Self {
-            data: Vec::new(),
-            headers: HashMap::new(),
-        }
-    }
-}
-
-impl Handler for ResponseHandler {
-    fn write(&mut self, data: &[u8]) -> std::result::Result<usize, WriteError> {
-        self.data.extend_from_slice(data);
-        Ok(data.len())
-    }
-
-    fn header(&mut self, header: &[u8]) -> bool {
-        if let Ok(header_str) = std::str::from_utf8(header) {
-            if let Some((key, value)) = header_str.split_once(':') {
-                self.headers
-                    .insert(key.trim().to_lowercase(), value.trim().to_string());
-            }
-        }
-        true
-    }
-}
-
 #[derive(Debug)]
 pub struct HttpResponse {
     pub status_code: u32,
@@ -130,8 +113,6 @@ impl HttpResponse {
     /// # Errors
     /// Returns an error if the body is not valid UTF-8.
     pub fn body_string(&self) -> Result<String> {
-        // Use from_utf8_lossy to avoid unnecessary clone for valid UTF-8
-        // We still need to allocate since we can't consume self
         Ok(String::from_utf8(self.body.clone())?)
     }
 
@@ -160,6 +141,7 @@ impl HttpResponse {
 /// Builder for configuring HTTP clients.
 ///
 /// This provides a fluent API for setting up an HttpClient with various options.
+#[derive(Default)]
 #[must_use]
 pub struct HttpClientBuilder {
     verbose: bool,
@@ -172,13 +154,7 @@ pub struct HttpClientBuilder {
 impl HttpClientBuilder {
     /// Create a new HTTP client builder with default settings.
     pub fn new() -> Self {
-        Self {
-            verbose: false,
-            timeout: None,
-            follow_redirects: false,
-            user_agent: None,
-            headers: Vec::new(),
-        }
+        Self::default()
     }
 
     /// Enable verbose output for debugging.
@@ -219,183 +195,115 @@ impl HttpClientBuilder {
 
     /// Build the configured HTTP client.
     pub fn build(self) -> Result<HttpClient> {
-        let mut client = HttpClient::new()?;
+        let redirect_policy = if self.follow_redirects {
+            reqwest::redirect::Policy::default()
+        } else {
+            reqwest::redirect::Policy::none()
+        };
 
-        if self.verbose {
-            client.set_verbose(true)?;
-        }
+        let mut builder = reqwest::Client::builder().redirect(redirect_policy);
 
         if let Some(timeout) = self.timeout {
-            client.set_timeout(timeout)?;
-        }
-
-        if self.follow_redirects {
-            client.set_follow_location(true)?;
+            builder = builder.timeout(Duration::from_secs(timeout));
         }
 
         if let Some(ref ua) = self.user_agent {
-            client.set_user_agent(ua)?;
+            builder = builder.user_agent(ua);
         }
 
-        if !self.headers.is_empty() {
-            client.set_headers(&self.headers)?;
+        let client = builder.build()?;
+
+        let mut header_map = reqwest::header::HeaderMap::new();
+        for (name, value) in &self.headers {
+            let name = reqwest::header::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|e| PurlError::Http(e.to_string()))?;
+            let value = reqwest::header::HeaderValue::from_str(value)
+                .map_err(|e| PurlError::Http(e.to_string()))?;
+            header_map.append(name, value);
         }
 
-        Ok(client)
-    }
-}
-
-impl Default for HttpClientBuilder {
-    fn default() -> Self {
-        Self::new()
+        Ok(HttpClient {
+            client,
+            headers: header_map,
+            verbose: self.verbose,
+        })
     }
 }
 
 pub struct HttpClient {
-    curl: Easy2<ResponseHandler>,
+    client: reqwest::Client,
+    headers: reqwest::header::HeaderMap,
+    verbose: bool,
 }
 
 impl HttpClient {
     pub fn new() -> Result<Self> {
-        let handler = ResponseHandler::new();
-        let curl = Easy2::new(handler);
-
-        Ok(Self { curl })
+        HttpClientBuilder::new().build()
     }
 
-    pub fn set_headers(&mut self, headers: &[(String, String)]) -> Result<()> {
-        let mut list = curl::easy::List::new();
-        for (name, value) in headers {
-            list.append(&format!("{name}: {value}"))?;
-        }
-        self.curl.http_headers(list)?;
-        Ok(())
+    /// Perform a GET request.
+    pub async fn get(&mut self, url: &str) -> Result<HttpResponse> {
+        self.request(HttpMethod::Get, url, None).await
     }
 
-    /// Set verbose mode
-    pub fn set_verbose(&mut self, verbose: bool) -> Result<()> {
-        self.curl.verbose(verbose)?;
-        Ok(())
-    }
-
-    /// Set timeout
-    pub fn set_timeout(&mut self, timeout_secs: u64) -> Result<()> {
-        self.curl
-            .timeout(std::time::Duration::from_secs(timeout_secs))?;
-        Ok(())
-    }
-
-    /// Set follow redirects
-    pub fn set_follow_location(&mut self, follow: bool) -> Result<()> {
-        self.curl.follow_location(follow)?;
-        Ok(())
-    }
-
-    /// Set user agent
-    pub fn set_user_agent(&mut self, user_agent: &str) -> Result<()> {
-        self.curl.useragent(user_agent)?;
-        Ok(())
-    }
-
-    /// Perform a GET request
-    pub fn get(&mut self, url: &str) -> Result<HttpResponse> {
-        self.curl.url(url)?;
-        self.curl.get(true)?;
-        self.perform()
-    }
-
-    /// Perform a POST request with optional body
-    pub fn post(&mut self, url: &str, body: Option<&[u8]>) -> Result<HttpResponse> {
-        self.curl.url(url)?;
-        self.curl.post(true)?;
-
-        if let Some(data) = body {
-            self.curl.post_field_size(data.len() as u64)?;
-            self.curl.post_fields_copy(data)?;
-        }
-
-        self.perform()
+    /// Perform a POST request with optional body.
+    pub async fn post(&mut self, url: &str, body: Option<&[u8]>) -> Result<HttpResponse> {
+        self.request(HttpMethod::Post, url, body).await
     }
 
     /// Perform a request with the specified HTTP method and optional body.
     ///
     /// This method accepts any type that implements `Into<HttpMethod>`, including
     /// `&str` for convenience.
-    pub fn request(
+    pub async fn request(
         &mut self,
         method: impl Into<HttpMethod>,
         url: &str,
         body: Option<&[u8]>,
     ) -> Result<HttpResponse> {
         let method = method.into();
-        self.curl.url(url)?;
 
-        match &method {
-            HttpMethod::Get => {
-                self.curl.get(true)?;
-            }
-            HttpMethod::Post => {
-                self.curl.post(true)?;
-                if let Some(data) = body {
-                    self.curl.post_field_size(data.len() as u64)?;
-                    self.curl.post_fields_copy(data)?;
-                }
-            }
-            HttpMethod::Put => {
-                self.curl.custom_request("PUT")?;
-                if let Some(data) = body {
-                    self.curl.post_field_size(data.len() as u64)?;
-                    self.curl.post_fields_copy(data)?;
-                }
-            }
-            HttpMethod::Patch => {
-                self.curl.custom_request("PATCH")?;
-                if let Some(data) = body {
-                    self.curl.post_field_size(data.len() as u64)?;
-                    self.curl.post_fields_copy(data)?;
-                }
-            }
-            HttpMethod::Delete => {
-                self.curl.custom_request("DELETE")?;
-                if let Some(data) = body {
-                    self.curl.post_field_size(data.len() as u64)?;
-                    self.curl.post_fields_copy(data)?;
-                }
-            }
-            HttpMethod::Head => {
-                self.curl.nobody(true)?;
-            }
-            HttpMethod::Options => {
-                self.curl.custom_request("OPTIONS")?;
-            }
-            HttpMethod::Custom(name) => {
-                self.curl.custom_request(name)?;
-                if let Some(data) = body {
-                    self.curl.post_field_size(data.len() as u64)?;
-                    self.curl.post_fields_copy(data)?;
-                }
+        if self.verbose {
+            eprintln!("> {} {}", method, url);
+        }
+
+        let mut req = self
+            .client
+            .request(method.to_reqwest()?, url)
+            .headers(self.headers.clone());
+
+        if let Some(data) = body {
+            req = req.body(data.to_vec());
+        }
+
+        let response = req.send().await?;
+        let status_code = response.status().as_u16() as u32;
+
+        let mut headers = HashMap::new();
+        for (key, value) in response.headers() {
+            if let Ok(v) = value.to_str() {
+                let key = key.as_str().to_lowercase();
+                headers
+                    .entry(key)
+                    .and_modify(|existing: &mut String| {
+                        existing.push_str(", ");
+                        existing.push_str(v);
+                    })
+                    .or_insert_with(|| v.to_string());
             }
         }
 
-        self.perform()
-    }
+        if self.verbose {
+            eprintln!("< {} {}", status_code, url);
+        }
 
-    /// Perform the request and return the response
-    fn perform(&mut self) -> Result<HttpResponse> {
-        self.curl.perform()?;
+        let body = response.bytes().await?;
 
-        let status_code = self.curl.response_code()?;
-
-        let handler = self.curl.get_mut();
-
-        // Take ownership of data instead of cloning
-        let response = HttpResponse {
+        Ok(HttpResponse {
             status_code,
-            headers: std::mem::take(&mut handler.headers),
-            body: std::mem::take(&mut handler.data),
-        };
-
-        Ok(response)
+            headers,
+            body: body.to_vec(),
+        })
     }
 }
 

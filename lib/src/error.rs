@@ -94,7 +94,7 @@ pub enum PurlError {
     Io(#[from] std::io::Error),
 
     #[error("Network request failed: {0}")]
-    Curl(#[from] curl::Error),
+    Reqwest(#[from] reqwest::Error),
 
     #[error("Server returned invalid text encoding. The response may be corrupted.")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),

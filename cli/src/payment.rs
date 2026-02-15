@@ -69,7 +69,9 @@ pub async fn handle_payment_request(
         eprintln!("Making payment request...");
     }
 
-    let response = request_ctx.execute_with_payment(url, &payment_payload)?;
+    let response = request_ctx
+        .execute_with_payment(url, &payment_payload)
+        .await?;
 
     display_settlement_info(&request_ctx.cli, &response)?;
 

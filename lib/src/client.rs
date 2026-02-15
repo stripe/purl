@@ -191,7 +191,7 @@ impl PurlClient {
     }
 
     /// Execute an HTTP request with the configured method and data
-    fn execute_request(
+    async fn execute_request(
         &self,
         client: &mut HttpClient,
         method: &str,
@@ -199,15 +199,15 @@ impl PurlClient {
         data: Option<&[u8]>,
     ) -> Result<HttpResponse> {
         match method {
-            "GET" => client.get(url),
-            "POST" => client.post(url, data),
+            "GET" => client.get(url).await,
+            "POST" => client.post(url, data).await,
             _ => Err(PurlError::UnsupportedHttpMethod(method.to_string())),
         }
     }
 
     async fn request(&self, method: &str, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
         let mut client = self.configure_client(&[])?;
-        let response = self.execute_request(&mut client, method, url, data)?;
+        let response = self.execute_request(&mut client, method, url, data).await?;
 
         // Check if this is a payment-required response
         if !response.is_payment_required() {
@@ -251,7 +251,7 @@ impl PurlClient {
         let (header_name, header_value) = protocol.create_credential_header(&credential);
         let payment_header = vec![(header_name, header_value)];
         let mut client = self.configure_client(&payment_header)?;
-        let response = self.execute_request(&mut client, method, url, data)?;
+        let response = self.execute_request(&mut client, method, url, data).await?;
 
         // Use protocol to parse the receipt
         let settlement = if let Some(receipt_json) =
