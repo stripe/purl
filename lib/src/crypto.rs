@@ -139,20 +139,26 @@ pub fn validate_evm_key(key: &str) -> Result<()> {
     use alloy_signer_local::PrivateKeySigner;
 
     let key = crate::utils::strip_0x_prefix(key);
-    let key_bytes =
-        hex::decode(key).map_err(|e| PurlError::InvalidKey(format!("Invalid hex: {e}")))?;
+    let key_bytes = hex::decode(key).map_err(|_| {
+        PurlError::InvalidKey(
+            "Invalid Ethereum private key format. Expected a 64-character hex string.".to_string(),
+        )
+    })?;
 
     if key_bytes.len() != EVM_PRIVATE_KEY_BYTES {
         return Err(PurlError::InvalidKey(format!(
-            "Private key must be {} bytes, got {}",
-            EVM_PRIVATE_KEY_BYTES,
-            key_bytes.len()
+            "Invalid Ethereum private key. Expected 64 hex characters (32 bytes), got {}.",
+            key_bytes.len() * 2
         )));
     }
 
-    // Verify it's a valid secp256k1 scalar (non-zero and < curve order)
-    PrivateKeySigner::from_slice(&key_bytes)
-        .map_err(|e| PurlError::InvalidKey(format!("Invalid secp256k1 key: {e}")))?;
+    // Verify it's a valid key
+    PrivateKeySigner::from_slice(&key_bytes).map_err(|_| {
+        PurlError::InvalidKey(
+            "Invalid Ethereum private key. The key value is not valid for this network."
+                .to_string(),
+        )
+    })?;
 
     Ok(())
 }
@@ -166,21 +172,24 @@ pub fn validate_evm_key(key: &str) -> Result<()> {
 pub fn validate_solana_keypair(keypair_b58: &str) -> Result<()> {
     use solana_sdk::signature::Keypair;
 
-    let keypair_bytes = bs58::decode(keypair_b58)
-        .into_vec()
-        .map_err(|e| PurlError::InvalidKey(format!("Invalid base58: {e}")))?;
+    let keypair_bytes = bs58::decode(keypair_b58).into_vec().map_err(|_| {
+        PurlError::InvalidKey(
+            "Invalid Solana private key format. Expected a base58-encoded string.".to_string(),
+        )
+    })?;
 
     if keypair_bytes.len() != SOLANA_KEYPAIR_BYTES {
-        return Err(PurlError::InvalidKey(format!(
-            "Keypair must be {} bytes, got {}",
-            SOLANA_KEYPAIR_BYTES,
-            keypair_bytes.len()
-        )));
+        return Err(PurlError::InvalidKey(
+            "Invalid Solana private key. The key length is incorrect. Make sure you copied the full key.".to_string()
+        ));
     }
 
-    // Verify the keypair is valid and the public key matches the secret key
-    Keypair::try_from(&keypair_bytes[..])
-        .map_err(|e| PurlError::InvalidKey(format!("Invalid Ed25519 keypair: {e}")))?;
+    // Verify the keypair is valid
+    Keypair::try_from(&keypair_bytes[..]).map_err(|_| {
+        PurlError::InvalidKey(
+            "Invalid Solana private key. The key data is corrupted or invalid.".to_string(),
+        )
+    })?;
 
     Ok(())
 }
@@ -222,28 +231,27 @@ mod tests {
         // Invalid: too short (odd number of hex chars fails hex decode)
         let too_short = "0x12345";
         let err = validate_evm_key(too_short).unwrap_err();
-        assert!(err.to_string().contains("Invalid hex"));
+        assert!(err.to_string().contains("Invalid Ethereum private key"));
 
         // Invalid: even length but wrong byte count
         let wrong_length = "0x12345678";
         let err = validate_evm_key(wrong_length).unwrap_err();
-        assert!(err.to_string().contains("must be 32 bytes"));
+        assert!(err.to_string().contains("Expected 64 hex characters"));
 
         // Invalid: non-hex characters
         let invalid_hex = "0xGGGG567890123456789012345678901234567890123456789012345678901234";
         let err = validate_evm_key(invalid_hex).unwrap_err();
-        assert!(err.to_string().contains("Invalid hex"));
+        assert!(err.to_string().contains("Invalid Ethereum private key"));
 
-        // Invalid: zero key (not a valid secp256k1 scalar)
+        // Invalid: zero key (not a valid scalar)
         let zero_key = "0x0000000000000000000000000000000000000000000000000000000000000000";
         let err = validate_evm_key(zero_key).unwrap_err();
-        assert!(err.to_string().contains("Invalid secp256k1 key"));
+        assert!(err.to_string().contains("not valid for this network"));
 
-        // Invalid: key >= curve order (secp256k1 order is
-        // 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141)
+        // Invalid: key >= curve order
         let too_large = "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFE";
         let err = validate_evm_key(too_large).unwrap_err();
-        assert!(err.to_string().contains("Invalid secp256k1 key"));
+        assert!(err.to_string().contains("not valid for this network"));
     }
 
     #[test]
@@ -255,18 +263,18 @@ mod tests {
         // Invalid: non-base58 characters (0, O, I, l are not in base58)
         let invalid_base58 = "0OIl567890123456789012345678901234567890123456789012345678901234";
         let err = validate_solana_keypair(invalid_base58).unwrap_err();
-        assert!(err.to_string().contains("Invalid base58"));
+        assert!(err.to_string().contains("Invalid Solana private key"));
 
         // Invalid: too short
         let too_short = "abcd1234";
         let err = validate_solana_keypair(too_short).unwrap_err();
-        assert!(err.to_string().contains("must be 64 bytes"));
+        assert!(err.to_string().contains("key length is incorrect"));
 
         // Invalid: wrong length (valid base58 but not 64 bytes)
         // This is 32 bytes base58-encoded (a valid Solana pubkey, not a keypair)
         let pubkey_only = "3Z7cXSyeFR8wNGMVXUE1TwtKn5D5Vu7FzEv69dokLv7K";
         let err = validate_solana_keypair(pubkey_only).unwrap_err();
-        assert!(err.to_string().contains("must be 64 bytes"));
+        assert!(err.to_string().contains("key length is incorrect"));
     }
 
     #[test]
@@ -282,6 +290,6 @@ mod tests {
 
         let bad_keypair_b58 = bs58::encode(&bad_bytes).into_string();
         let err = validate_solana_keypair(&bad_keypair_b58).unwrap_err();
-        assert!(err.to_string().contains("Invalid Ed25519 keypair"));
+        assert!(err.to_string().contains("corrupted or invalid"));
     }
 }
