@@ -215,9 +215,9 @@ impl PurlClient {
         }
 
         // Use protocol registry to find which protocol should handle this response
-        let protocol = PROTOCOL_REGISTRY.find_handler(&response).ok_or_else(|| {
-            PurlError::Http("No compatible payment protocol found".to_string())
-        })?;
+        let protocol = PROTOCOL_REGISTRY
+            .find_handler(&response)
+            .ok_or_else(|| PurlError::Http("No compatible payment protocol found".to_string()))?;
 
         // Parse the payment challenge using the detected protocol
         let json = protocol.parse_challenge_json(&response)?;
