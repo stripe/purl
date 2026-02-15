@@ -1,12 +1,17 @@
 use crate::network::{is_evm_network, is_solana_network};
+use crate::protocol::{PaymentChallenge, PaymentReceipt};
 use serde::{Deserialize, Serialize};
+use std::any::Any;
 use std::fmt;
 use std::num::ParseIntError;
 use std::str::FromStr;
 
 // Sub-modules for version-specific types
+mod protocol;
 pub mod v1;
 pub mod v2;
+
+pub use protocol::X402Protocol;
 
 // ==================== Payment Header Constants ====================
 
@@ -451,6 +456,91 @@ impl SettlementResponse {
     }
 }
 
+// ==================== Trait Implementations ====================
+
+impl PaymentChallenge for PaymentRequirements {
+    fn network(&self) -> &str {
+        PaymentRequirements::network(self)
+    }
+
+    fn amount(&self) -> &str {
+        match self {
+            PaymentRequirements::V1(v1) => &v1.max_amount_required,
+            PaymentRequirements::V2 { requirements, .. } => &requirements.amount,
+        }
+    }
+
+    fn asset(&self) -> &str {
+        PaymentRequirements::asset(self)
+    }
+
+    fn recipient(&self) -> &str {
+        self.pay_to()
+    }
+
+    fn is_evm(&self) -> bool {
+        PaymentRequirements::is_evm(self)
+    }
+
+    fn is_solana(&self) -> bool {
+        PaymentRequirements::is_solana(self)
+    }
+
+    fn max_timeout_seconds(&self) -> u64 {
+        PaymentRequirements::max_timeout_seconds(self)
+    }
+
+    fn scheme(&self) -> &str {
+        PaymentRequirements::scheme(self)
+    }
+
+    fn resource(&self) -> &str {
+        PaymentRequirements::resource(self)
+    }
+
+    fn extra(&self) -> Option<&serde_json::Value> {
+        PaymentRequirements::extra(self)
+    }
+
+    fn description(&self) -> &str {
+        PaymentRequirements::description(self)
+    }
+
+    fn mime_type(&self) -> &str {
+        PaymentRequirements::mime_type(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl PaymentReceipt for SettlementResponse {
+    fn is_success(&self) -> bool {
+        SettlementResponse::is_success(self)
+    }
+
+    fn transaction(&self) -> &str {
+        SettlementResponse::transaction(self)
+    }
+
+    fn network(&self) -> &str {
+        SettlementResponse::network(self)
+    }
+
+    fn error_reason(&self) -> Option<&str> {
+        SettlementResponse::error_reason(self)
+    }
+
+    fn payer(&self) -> Option<&str> {
+        SettlementResponse::payer(self)
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -640,5 +730,110 @@ mod tests {
         assert_eq!(v2_payload.payment_header_name(), "PAYMENT-SIGNATURE");
         assert_eq!(v2_payload.response_header_name(), PAYMENT_RESPONSE_HEADER);
         assert_eq!(v2_payload.response_header_name(), "payment-response");
+    }
+
+    #[test]
+    fn test_payment_challenge_trait_v1() {
+        let req = v1::PaymentRequirements {
+            scheme: "eip3009".to_string(),
+            network: "base".to_string(),
+            max_amount_required: "1000".to_string(),
+            asset: "0x123".to_string(),
+            pay_to: "0x456".to_string(),
+            resource: "/data".to_string(),
+            description: "test".to_string(),
+            mime_type: "application/json".to_string(),
+            output_schema: None,
+            max_timeout_seconds: 300,
+            extra: None,
+        };
+
+        let unified = PaymentRequirements::V1(req);
+        let challenge: &dyn PaymentChallenge = &unified;
+
+        assert_eq!(challenge.network(), "base");
+        assert_eq!(challenge.amount(), "1000");
+        assert_eq!(challenge.asset(), "0x123");
+        assert_eq!(challenge.recipient(), "0x456");
+        assert!(challenge.is_evm());
+        assert!(!challenge.is_solana());
+        assert_eq!(challenge.max_timeout_seconds(), 300);
+        assert_eq!(challenge.scheme(), "eip3009");
+        assert_eq!(challenge.resource(), "/data");
+        assert_eq!(challenge.description(), "test");
+        assert_eq!(challenge.mime_type(), "application/json");
+    }
+
+    #[test]
+    fn test_payment_challenge_trait_v2() {
+        let req = v2::PaymentRequirements {
+            scheme: "exact".to_string(),
+            network: "eip155:84532".to_string(),
+            amount: "5000".to_string(),
+            asset: "0xabc".to_string(),
+            pay_to: "0xdef".to_string(),
+            max_timeout_seconds: 60,
+            extra: Some(serde_json::json!({"name": "USDC"})),
+        };
+        let resource = v2::ResourceInfo {
+            url: "https://example.com/api".to_string(),
+            description: Some("API access".to_string()),
+            mime_type: Some("application/json".to_string()),
+        };
+
+        let unified = PaymentRequirements::V2 {
+            requirements: req,
+            resource_info: resource,
+        };
+        let challenge: &dyn PaymentChallenge = &unified;
+
+        assert_eq!(challenge.network(), "eip155:84532");
+        assert_eq!(challenge.amount(), "5000");
+        assert_eq!(challenge.asset(), "0xabc");
+        assert_eq!(challenge.recipient(), "0xdef");
+        assert!(challenge.is_evm());
+        assert!(!challenge.is_solana());
+        assert_eq!(challenge.max_timeout_seconds(), 60);
+        assert_eq!(challenge.scheme(), "exact");
+        assert_eq!(challenge.resource(), "https://example.com/api");
+        assert_eq!(challenge.description(), "API access");
+        assert_eq!(challenge.mime_type(), "application/json");
+        assert!(challenge.extra().is_some());
+    }
+
+    #[test]
+    fn test_payment_receipt_trait() {
+        let settlement = SettlementResponse::V1(v1::SettlementResponse {
+            success: Some(true),
+            error_reason: None,
+            transaction: "0xabc123".to_string(),
+            network: "base".to_string(),
+            payer: "0x1234".to_string(),
+        });
+        let receipt: &dyn PaymentReceipt = &settlement;
+
+        assert!(receipt.is_success());
+        assert_eq!(receipt.transaction(), "0xabc123");
+        assert_eq!(receipt.network(), "base");
+        assert!(receipt.error_reason().is_none());
+        assert_eq!(receipt.payer(), Some("0x1234"));
+    }
+
+    #[test]
+    fn test_payment_receipt_trait_v2() {
+        let settlement = SettlementResponse::V2(v2::SettlementResponse {
+            success: false,
+            error_reason: Some("Insufficient funds".to_string()),
+            transaction: "0xdef456".to_string(),
+            network: "eip155:84532".to_string(),
+            payer: Some("0x5678".to_string()),
+        });
+        let receipt: &dyn PaymentReceipt = &settlement;
+
+        assert!(!receipt.is_success());
+        assert_eq!(receipt.transaction(), "0xdef456");
+        assert_eq!(receipt.network(), "eip155:84532");
+        assert_eq!(receipt.error_reason(), Some("Insufficient funds"));
+        assert_eq!(receipt.payer(), Some("0x5678"));
     }
 }

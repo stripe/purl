@@ -1,18 +1,24 @@
-//! Library API - high-level client for making x402 payment-enabled requests
+//! Library API - high-level client for making payment-enabled HTTP requests
+//!
+//! This module provides the main entry point for making HTTP requests with automatic
+//! payment protocol handling. It uses the protocol abstraction layer to support
+//! multiple payment protocols.
 
 use crate::config::Config;
 use crate::error::{PurlError, Result};
 use crate::http::{HttpClient, HttpClientBuilder, HttpResponse};
 use crate::negotiator::PaymentNegotiator;
 use crate::payment_provider::PROVIDER_REGISTRY;
+use crate::protocol::{CredentialPayload, PROTOCOL_REGISTRY};
 use crate::x402::SettlementResponse;
 use base64::Engine;
 
-/// Builder for making x402-enabled HTTP requests.
+/// Builder for making payment-enabled HTTP requests.
 ///
-/// This is the main entry point for making HTTP requests with automatic x402 payment handling.
-/// Requests that return a 402 Payment Required status will automatically negotiate payment
-/// requirements and submit payment before retrying the request.
+/// This is the main entry point for making HTTP requests with automatic payment handling.
+/// Requests that return a 402 Payment Required status will automatically detect the
+/// payment protocol, negotiate payment requirements, and submit payment before
+/// retrying the request.
 ///
 /// # Example
 /// ```no_run
@@ -203,11 +209,18 @@ impl PurlClient {
         let mut client = self.configure_client(&[])?;
         let response = self.execute_request(&mut client, method, url, data)?;
 
+        // Check if this is a payment-required response
         if !response.is_payment_required() {
             return Ok(PaymentResult::Success(response));
         }
 
-        let json = response.payment_requirements_json()?;
+        // Use protocol registry to detect which protocol to use
+        let protocol = PROTOCOL_REGISTRY.detect(&response).ok_or_else(|| {
+            PurlError::Http("No compatible payment protocol detected".to_string())
+        })?;
+
+        // Parse the payment challenge using the detected protocol
+        let json = protocol.parse_challenge_json(&response)?;
         let negotiator = PaymentNegotiator::new(&self.config)
             .with_allowed_networks(&self.allowed_networks)
             .with_max_amount(self.max_amount.as_deref());
@@ -228,19 +241,23 @@ impl PurlClient {
         let payment_payload = provider.create_payment(&selected, &self.config).await?;
 
         let payload_json = serde_json::to_string(&payment_payload)?;
-        let encoded_payload = base64::engine::general_purpose::STANDARD.encode(payload_json);
+        let encoded_payload = base64::engine::general_purpose::STANDARD.encode(&payload_json);
 
-        // Use version-appropriate header name
-        let header_name = payment_payload.payment_header_name();
-        let payment_header = vec![(header_name.to_string(), encoded_payload)];
+        // Use protocol to create the credential header
+        let credential = CredentialPayload {
+            data: encoded_payload,
+            version: payment_payload.x402_version,
+        };
+        let (header_name, header_value) = protocol.create_credential_header(&credential);
+        let payment_header = vec![(header_name, header_value)];
         let mut client = self.configure_client(&payment_header)?;
         let response = self.execute_request(&mut client, method, url, data)?;
 
-        // Check both v1 and v2 response headers
-        let response_header_name = payment_payload.response_header_name();
-        let settlement = if let Some(header) = response.get_header(response_header_name) {
-            let decoded = base64::engine::general_purpose::STANDARD.decode(header)?;
-            let settlement: SettlementResponse = serde_json::from_slice(&decoded)?;
+        // Use protocol to parse the receipt
+        let settlement = if let Some(receipt_json) =
+            protocol.parse_receipt_json(&response, credential.version)?
+        {
+            let settlement: SettlementResponse = serde_json::from_str(&receipt_json)?;
             Some(settlement)
         } else {
             None
