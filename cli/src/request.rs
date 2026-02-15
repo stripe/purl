@@ -61,7 +61,7 @@ impl RequestContext {
         url: &str,
         extra_headers: Option<&[(String, String)]>,
     ) -> Result<HttpResponse> {
-        let mut client = self.build_client(extra_headers)?;
+        let client = self.build_client(extra_headers)?;
         Ok(client
             .request(self.method.clone(), url, self.body.as_deref())
             .await?)

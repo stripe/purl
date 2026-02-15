@@ -78,7 +78,7 @@ pub async fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
         builder = builder.user_agent(user_agent);
     }
 
-    let mut client = builder.build()?;
+    let client = builder.build()?;
 
     if cli.is_verbose() && cli.should_show_output() {
         eprintln!("Inspecting payment requirements for: {url}");

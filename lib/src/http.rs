@@ -242,12 +242,12 @@ impl HttpClient {
     }
 
     /// Perform a GET request.
-    pub async fn get(&mut self, url: &str) -> Result<HttpResponse> {
+    pub async fn get(&self, url: &str) -> Result<HttpResponse> {
         self.request(HttpMethod::Get, url, None).await
     }
 
     /// Perform a POST request with optional body.
-    pub async fn post(&mut self, url: &str, body: Option<&[u8]>) -> Result<HttpResponse> {
+    pub async fn post(&self, url: &str, body: Option<&[u8]>) -> Result<HttpResponse> {
         self.request(HttpMethod::Post, url, body).await
     }
 
@@ -256,7 +256,7 @@ impl HttpClient {
     /// This method accepts any type that implements `Into<HttpMethod>`, including
     /// `&str` for convenience.
     pub async fn request(
-        &mut self,
+        &self,
         method: impl Into<HttpMethod>,
         url: &str,
         body: Option<&[u8]>,

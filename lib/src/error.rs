@@ -56,9 +56,6 @@ pub enum PurlError {
     #[error("{0}")]
     Http(String),
 
-    #[error("HTTP method '{0}' is not supported. Use GET or POST.")]
-    UnsupportedHttpMethod(String),
-
     #[error("{0}")]
     Signing(String),
 
