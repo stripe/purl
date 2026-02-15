@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use colored::Colorize;
-use purl_lib::{HttpClientBuilder, HttpMethod, PaymentMethod, PaymentRequirementsResponse};
+use purl_lib::{HttpClientBuilder, PaymentMethod, PaymentRequirementsResponse};
 use serde::Serialize;
 use std::borrow::Cow;
 
@@ -84,7 +84,7 @@ pub async fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
         eprintln!("Inspecting payment requirements for: {url}");
     }
 
-    let response = client.request(HttpMethod::Get, url, None).await?;
+    let response = client.get(url).await?;
 
     if !response.is_payment_required() {
         anyhow::bail!(

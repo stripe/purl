@@ -97,12 +97,12 @@ fn get_request_method_and_body(cli: &Cli) -> (HttpMethod, Option<Vec<u8>>) {
     let method = cli
         .method
         .as_ref()
-        .map(HttpMethod::from)
+        .map(|s| HttpMethod::from_bytes(s.as_bytes()).unwrap_or(HttpMethod::GET))
         .unwrap_or_else(|| {
             if body.is_some() {
-                HttpMethod::Post
+                HttpMethod::POST
             } else {
-                HttpMethod::Get
+                HttpMethod::GET
             }
         });
 

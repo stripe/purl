@@ -6,7 +6,7 @@
 
 use crate::config::Config;
 use crate::error::{PurlError, Result};
-use crate::http::{HttpClient, HttpClientBuilder, HttpResponse};
+use crate::http::{HttpClient, HttpClientBuilder, HttpMethod, HttpResponse};
 use crate::negotiator::PaymentNegotiator;
 use crate::payment_provider::PROVIDER_REGISTRY;
 use crate::protocol::{CredentialPayload, PROTOCOL_REGISTRY};
@@ -160,7 +160,7 @@ impl PurlClient {
     /// If the server responds with 402 Payment Required, payment will be
     /// automatically negotiated and submitted before retrying the request.
     pub async fn get(&self, url: &str) -> Result<PaymentResult> {
-        self.request("GET", url, None).await
+        self.request(HttpMethod::GET, url, None).await
     }
 
     /// Perform a POST request to the specified URL with optional body data.
@@ -168,7 +168,7 @@ impl PurlClient {
     /// If the server responds with 402 Payment Required, payment will be
     /// automatically negotiated and submitted before retrying the request.
     pub async fn post(&self, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
-        self.request("POST", url, data).await
+        self.request(HttpMethod::POST, url, data).await
     }
 
     /// Configure a new HttpClient with the common settings
@@ -190,9 +190,9 @@ impl PurlClient {
         builder.build()
     }
 
-    async fn request(&self, method: &str, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
+    async fn request(&self, method: HttpMethod, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
         let client = self.configure_client(&[])?;
-        let response = client.request(method, url, data).await?;
+        let response = client.request(method.clone(), url, data).await?;
 
         // Check if this is a payment-required response
         if !response.is_payment_required() {
