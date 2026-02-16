@@ -190,7 +190,12 @@ impl PurlClient {
         builder.build()
     }
 
-    async fn request(&self, method: HttpMethod, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
+    async fn request(
+        &self,
+        method: HttpMethod,
+        url: &str,
+        data: Option<&[u8]>,
+    ) -> Result<PaymentResult> {
         let client = self.configure_client(&[])?;
         let response = client.request(method.clone(), url, data).await?;
 
