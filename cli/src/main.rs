@@ -27,6 +27,7 @@ use colored::control;
 use exit_codes::ExitCode;
 use purl_lib::{Config, PaymentRequirementsResponse, WalletConfig};
 use std::path::PathBuf;
+use std::str::FromStr;
 
 use config_utils::load_config;
 use output::{
@@ -193,8 +194,65 @@ async fn make_request(cli: Cli) -> Result<()> {
 
     let response = handle_payment_request(&config, &request_ctx, url, requirements).await?;
 
-    // If still 402 after payment attempt, don't print empty body
+    // If still 402 after payment attempt, check for specific error codes
     if response.is_payment_required() {
+        if let Ok(json) = response.payment_requirements_json() {
+            if let Ok(requirements) =
+                serde_json::from_str::<purl_lib::PaymentRequirementsResponse>(&json)
+            {
+                if let Some(error_msg) = requirements.error() {
+                    if error_msg == "insufficient_funds" {
+                        let (required, balance, asset, network) =
+                            if let Some(req) = requirements.accepts().first() {
+                                let network_str = req.network().to_string();
+                                let asset_str = req.asset().to_string();
+
+                                let required_amount = if let Ok(amt) = req.parse_max_amount() {
+                                    Some(format_amount_human(
+                                        amt.as_atomic_units(),
+                                        &network_str,
+                                        &asset_str,
+                                    ))
+                                } else {
+                                    Some("Unspecified amount".to_string())
+                                };
+
+                                let balance_str =
+                                    get_user_balance(&config, &network_str, &asset_str).await;
+
+                                let symbol = get_token_symbol(&network_str, &asset_str);
+
+                                let canonical_network =
+                                    purl_lib::network::resolve_network_alias(&network_str);
+                                let network_display = if canonical_network.is_empty() {
+                                    network_str.clone()
+                                } else {
+                                    canonical_network.to_string()
+                                };
+
+                                (
+                                    required_amount,
+                                    balance_str,
+                                    Some(symbol),
+                                    Some(network_display),
+                                )
+                            } else {
+                                (None, None, None, None)
+                            };
+
+                        return Err(purl_lib::PurlError::InsufficientBalance {
+                            message: error_msg.to_string(),
+                            required,
+                            balance,
+                            asset,
+                            network,
+                        }
+                        .into());
+                    }
+                }
+            }
+        }
+
         anyhow::bail!("Payment was not accepted by the server");
     }
 
@@ -473,6 +531,82 @@ fn init_color_support(cli: &Cli) {
             }
         }
     }
+}
+
+/// Format an amount in atomic units to human-readable format
+///
+/// Returns just the number without symbol.
+fn format_amount_human(amount: u128, network: &str, asset: &str) -> String {
+    use purl_lib::constants::get_token_decimals;
+
+    if let Ok(decimals) = get_token_decimals(network, asset) {
+        let divisor = 10u128.pow(decimals as u32);
+        let whole = amount / divisor;
+        let frac = amount % divisor;
+
+        if frac == 0 {
+            format!("{whole}")
+        } else {
+            format!("{whole}.{frac:0>width$}", width = decimals as usize)
+        }
+    } else {
+        format!("{} (atomic units)", amount)
+    }
+}
+
+/// Get the user's balance for a given network and asset
+///
+/// Note: Currently only supports USDC balance queries. Returns None if the asset
+/// is not a recognized USDC token or if the balance query fails.
+async fn get_user_balance(config: &Config, network: &str, asset: &str) -> Option<String> {
+    use purl_lib::currency::currencies;
+    use purl_lib::network::Network;
+    use purl_lib::WalletConfig;
+    use purl_lib::PROVIDER_REGISTRY;
+
+    // Resolve CAIP-2 format (e.g., "eip155:84532") to canonical name (e.g., "base-sepolia")
+    let canonical_network = purl_lib::network::resolve_network_alias(network);
+
+    // Verify the network exists
+    purl_lib::network::get_network(canonical_network)?;
+
+    // Check if this asset is USDC - only query balance for known tokens
+    let token_symbol = purl_lib::constants::get_token_symbol(canonical_network, asset);
+    if token_symbol != Some("USDC") {
+        return None;
+    }
+
+    let address = if purl_lib::network::is_evm_network(canonical_network) {
+        config.evm.as_ref()?.get_address().ok()?
+    } else if purl_lib::network::is_solana_network(canonical_network) {
+        config.solana.as_ref()?.get_address().ok()?
+    } else {
+        return None;
+    };
+
+    let network_enum = Network::from_str(canonical_network).ok()?;
+    let provider = PROVIDER_REGISTRY.find_provider(canonical_network)?;
+
+    let balance = provider
+        .get_balance(&address, network_enum, currencies::USDC)
+        .await
+        .ok()?;
+
+    Some(balance.balance_human)
+}
+
+/// Get token symbol for display
+fn get_token_symbol(network: &str, asset: &str) -> String {
+    purl_lib::constants::get_token_symbol(network, asset)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| {
+            // Fallback to truncated address if symbol not found
+            if asset.len() > 10 {
+                format!("{}...{}", &asset[..6], &asset[asset.len() - 4..])
+            } else {
+                asset.to_string()
+            }
+        })
 }
 
 #[cfg(test)]

@@ -19,6 +19,17 @@ pub enum PurlError {
     #[error("Payment amount {required} exceeds your limit of {max}. Increase your limit with `--max-amount` or decline this payment.")]
     AmountExceedsMax { required: u128, max: u128 },
 
+    /// Insufficient balance to complete payment
+    #[error("Insufficient balance to complete payment")]
+    InsufficientBalance {
+        message: String,
+        required: Option<String>,
+        balance: Option<String>,
+        asset: Option<String>,
+        network: Option<String>,
+    },
+
+    /// Invalid payment amount format
     #[error("Invalid amount '{0}'. Expected a numeric value.")]
     InvalidAmount(String),
 

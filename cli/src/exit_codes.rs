@@ -106,9 +106,9 @@ impl From<&purl_lib::PurlError> for ExitCode {
             | PurlError::TomlSerialize(_) => ExitCode::ConfigError,
 
             // Payment/funds errors
-            PurlError::AmountExceedsMax { .. } | PurlError::InvalidAmount(_) => {
-                ExitCode::InsufficientFunds
-            }
+            PurlError::AmountExceedsMax { .. }
+            | PurlError::InvalidAmount(_)
+            | PurlError::InsufficientBalance { .. } => ExitCode::InsufficientFunds,
 
             PurlError::NoPaymentMethods | PurlError::NoCompatibleMethod { .. } => {
                 ExitCode::PaymentFailed
@@ -160,6 +160,16 @@ mod tests {
         assert_eq!(
             ExitCode::from(&PurlError::UnknownNetwork("test".into())),
             ExitCode::NetworkError
+        );
+        assert_eq!(
+            ExitCode::from(&PurlError::InsufficientBalance {
+                message: "test".into(),
+                required: None,
+                balance: None,
+                asset: None,
+                network: None,
+            }),
+            ExitCode::InsufficientFunds
         );
     }
 }
