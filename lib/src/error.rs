@@ -56,9 +56,6 @@ pub enum PurlError {
     #[error("{0}")]
     Http(String),
 
-    #[error("HTTP method '{0}' is not supported. Use GET or POST.")]
-    UnsupportedHttpMethod(String),
-
     #[error("{0}")]
     Signing(String),
 
@@ -94,7 +91,7 @@ pub enum PurlError {
     Io(#[from] std::io::Error),
 
     #[error("Network request failed: {0}")]
-    Curl(#[from] curl::Error),
+    Reqwest(#[from] reqwest::Error),
 
     #[error("Server returned invalid text encoding. The response may be corrupted.")]
     InvalidUtf8(#[from] std::string::FromUtf8Error),

@@ -6,7 +6,7 @@
 
 use crate::config::Config;
 use crate::error::{PurlError, Result};
-use crate::http::{HttpClient, HttpClientBuilder, HttpResponse};
+use crate::http::{HttpClient, HttpClientBuilder, HttpMethod, HttpResponse};
 use crate::negotiator::PaymentNegotiator;
 use crate::payment_provider::PROVIDER_REGISTRY;
 use crate::protocol::{CredentialPayload, PROTOCOL_REGISTRY};
@@ -160,7 +160,7 @@ impl PurlClient {
     /// If the server responds with 402 Payment Required, payment will be
     /// automatically negotiated and submitted before retrying the request.
     pub async fn get(&self, url: &str) -> Result<PaymentResult> {
-        self.request("GET", url, None).await
+        self.request(HttpMethod::GET, url, None).await
     }
 
     /// Perform a POST request to the specified URL with optional body data.
@@ -168,7 +168,7 @@ impl PurlClient {
     /// If the server responds with 402 Payment Required, payment will be
     /// automatically negotiated and submitted before retrying the request.
     pub async fn post(&self, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
-        self.request("POST", url, data).await
+        self.request(HttpMethod::POST, url, data).await
     }
 
     /// Configure a new HttpClient with the common settings
@@ -190,24 +190,14 @@ impl PurlClient {
         builder.build()
     }
 
-    /// Execute an HTTP request with the configured method and data
-    fn execute_request(
+    async fn request(
         &self,
-        client: &mut HttpClient,
-        method: &str,
+        method: HttpMethod,
         url: &str,
         data: Option<&[u8]>,
-    ) -> Result<HttpResponse> {
-        match method {
-            "GET" => client.get(url),
-            "POST" => client.post(url, data),
-            _ => Err(PurlError::UnsupportedHttpMethod(method.to_string())),
-        }
-    }
-
-    async fn request(&self, method: &str, url: &str, data: Option<&[u8]>) -> Result<PaymentResult> {
-        let mut client = self.configure_client(&[])?;
-        let response = self.execute_request(&mut client, method, url, data)?;
+    ) -> Result<PaymentResult> {
+        let client = self.configure_client(&[])?;
+        let response = client.request(method.clone(), url, data).await?;
 
         // Check if this is a payment-required response
         if !response.is_payment_required() {
@@ -250,8 +240,8 @@ impl PurlClient {
         };
         let (header_name, header_value) = protocol.create_credential_header(&credential);
         let payment_header = vec![(header_name, header_value)];
-        let mut client = self.configure_client(&payment_header)?;
-        let response = self.execute_request(&mut client, method, url, data)?;
+        let client = self.configure_client(&payment_header)?;
+        let response = client.request(method, url, data).await?;
 
         // Use protocol to parse the receipt
         let settlement = if let Some(receipt_json) =

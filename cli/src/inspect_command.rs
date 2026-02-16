@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use colored::Colorize;
-use purl_lib::{HttpClientBuilder, HttpMethod, PaymentMethod, PaymentRequirementsResponse};
+use purl_lib::{HttpClientBuilder, PaymentMethod, PaymentRequirementsResponse};
 use serde::Serialize;
 use std::borrow::Cow;
 
@@ -62,7 +62,7 @@ fn get_decimals(network: &str, asset: &str) -> Result<u8> {
 }
 
 /// Inspect payment requirements for a URL
-pub fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
+pub async fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
     let config = load_config(cli.config.as_ref())?;
 
     // Build HTTP client
@@ -78,13 +78,13 @@ pub fn inspect_command(cli: &Cli, url: &str) -> Result<()> {
         builder = builder.user_agent(user_agent);
     }
 
-    let mut client = builder.build()?;
+    let client = builder.build()?;
 
     if cli.is_verbose() && cli.should_show_output() {
         eprintln!("Inspecting payment requirements for: {url}");
     }
 
-    let response = client.request(HttpMethod::Get, url, None)?;
+    let response = client.get(url).await?;
 
     if !response.is_payment_required() {
         anyhow::bail!(

@@ -56,17 +56,19 @@ impl RequestContext {
     }
 
     /// Execute an HTTP request
-    pub fn execute(
+    pub async fn execute(
         &self,
         url: &str,
         extra_headers: Option<&[(String, String)]>,
     ) -> Result<HttpResponse> {
-        let mut client = self.build_client(extra_headers)?;
-        Ok(client.request(self.method.clone(), url, self.body.as_deref())?)
+        let client = self.build_client(extra_headers)?;
+        Ok(client
+            .request(self.method.clone(), url, self.body.as_deref())
+            .await?)
     }
 
     /// Execute an HTTP request with a payment header
-    pub fn execute_with_payment(
+    pub async fn execute_with_payment(
         &self,
         url: &str,
         payment_payload: &PaymentPayload,
@@ -78,7 +80,7 @@ impl RequestContext {
         // Use version-appropriate header name
         let header_name = payment_payload.payment_header_name();
         let headers = vec![(header_name.to_string(), encoded_payload)];
-        self.execute(url, Some(&headers))
+        self.execute(url, Some(&headers)).await
     }
 }
 
@@ -95,12 +97,12 @@ fn get_request_method_and_body(cli: &Cli) -> (HttpMethod, Option<Vec<u8>>) {
     let method = cli
         .method
         .as_ref()
-        .map(HttpMethod::from)
+        .map(|s| HttpMethod::from_bytes(s.as_bytes()).unwrap_or(HttpMethod::GET))
         .unwrap_or_else(|| {
             if body.is_some() {
-                HttpMethod::Post
+                HttpMethod::POST
             } else {
-                HttpMethod::Get
+                HttpMethod::GET
             }
         });
 

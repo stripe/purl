@@ -137,7 +137,7 @@ async fn handle_command(cli: &Cli, command: &Commands) -> Result<()> {
             }
         }
 
-        Commands::Inspect { url } => inspect_command::inspect_command(cli, url),
+        Commands::Inspect { url } => inspect_command::inspect_command(cli, url).await,
 
         Commands::Topics { topic } => {
             if let Some(topic_name) = topic {
@@ -176,7 +176,7 @@ async fn make_request(cli: Cli) -> Result<()> {
         eprintln!("Making {} request to: {url}", request_ctx.method);
     }
 
-    let response = request_ctx.execute(url, None)?;
+    let response = request_ctx.execute(url, None).await?;
 
     if !response.is_payment_required() {
         handle_regular_response(&request_ctx.cli, response)?;
