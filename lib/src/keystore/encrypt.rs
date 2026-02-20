@@ -171,6 +171,20 @@ pub fn decrypt_keystore(keystore_path: &Path, password: Option<&str>) -> Result<
     }
 }
 
+/// Derive a 32-byte encryption key from a password and salt using scrypt.
+///
+/// This allocates an output buffer and passes it to scrypt for key derivation.
+/// The buffer is immediately overwritten by the scrypt KDF output.
+fn derive_key_with_scrypt(
+    password: &[u8],
+    salt: &[u8],
+    params: &scrypt::Params,
+) -> std::result::Result<[u8; 32], scrypt::errors::InvalidOutputLen> {
+    let mut derived = [0u8; 32];
+    scrypt::scrypt(password, salt, params, &mut derived)?;
+    Ok(derived)
+}
+
 /// Create an encrypted Solana keystore file from a base58-encoded keypair.
 ///
 /// Uses the same encryption scheme as EVM keystores (scrypt + AES-128-CTR)
@@ -179,7 +193,7 @@ pub fn create_solana_keystore(keypair_b58: &str, password: &str, name: &str) -> 
     use aes::cipher::{KeyIvInit, StreamCipher};
     use ctr::Ctr128BE;
     use rand::RngCore;
-    use scrypt::{scrypt, Params};
+    use scrypt::Params;
     use sha3::{Digest, Keccak256};
 
     // Decode and validate the keypair
@@ -210,8 +224,7 @@ pub fn create_solana_keystore(keypair_b58: &str, password: &str, name: &str) -> 
     // n=262144 (2^18), r=8, p=1, dklen=32
     let params = Params::new(18, 8, 1, 32)
         .map_err(|e| PurlError::ConfigMissing(format!("Invalid scrypt params: {e}")))?;
-    let mut derived_key = [0u8; 32];
-    scrypt(password.as_bytes(), &salt, &params, &mut derived_key)
+    let derived_key = derive_key_with_scrypt(password.as_bytes(), &salt, &params)
         .map_err(|e| PurlError::ConfigMissing(format!("Scrypt key derivation failed: {e}")))?;
 
     // Encrypt keypair with AES-128-CTR using first 16 bytes of derived key
@@ -275,7 +288,7 @@ pub fn create_solana_keystore(keypair_b58: &str, password: &str, name: &str) -> 
 pub fn decrypt_solana_keystore(keystore_path: &Path, password: Option<&str>) -> Result<Vec<u8>> {
     use aes::cipher::{KeyIvInit, StreamCipher};
     use ctr::Ctr128BE;
-    use scrypt::{scrypt, Params};
+    use scrypt::Params;
     use sha3::{Digest, Keccak256};
 
     if !keystore_path.exists() {
@@ -355,10 +368,10 @@ pub fn decrypt_solana_keystore(keystore_path: &Path, password: Option<&str>) -> 
 
     // Helper to attempt decryption with a given password
     let try_decrypt = |password: &str| -> std::result::Result<Vec<u8>, ()> {
-        let mut derived_key = [0u8; 32];
-        if scrypt(password.as_bytes(), &salt, &params, &mut derived_key).is_err() {
-            return Err(());
-        }
+        let derived_key = match derive_key_with_scrypt(password.as_bytes(), &salt, &params) {
+            Ok(key) => key,
+            Err(_) => return Err(()),
+        };
 
         // Verify MAC
         let mut mac_input = Vec::new();
