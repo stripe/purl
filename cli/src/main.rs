@@ -103,9 +103,18 @@ async fn handle_command(cli: &Cli, command: &Commands) -> Result<()> {
                 name,
                 wallet_type,
                 private_key,
-            } => wallet_commands::add_command(name.clone(), *wallet_type, private_key.clone()),
+                activate,
+            } => wallet_commands::add_command(
+                name.clone(),
+                *wallet_type,
+                private_key.clone(),
+                *activate,
+                cli.password.clone(),
+            ),
             WalletCommands::Show { name } => wallet_commands::show_command(name),
-            WalletCommands::Verify { name } => wallet_commands::verify_command(name),
+            WalletCommands::Verify { name } => {
+                wallet_commands::verify_command(name, cli.password.clone())
+            }
             WalletCommands::Use { name } => wallet_commands::use_command(name),
             WalletCommands::Remove { name } => wallet_commands::remove_command(name),
         },

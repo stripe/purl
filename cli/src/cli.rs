@@ -233,6 +233,7 @@ pub struct Cli {
         long = "password",
         value_name = "PASSWORD",
         env = "PURL_PASSWORD",
+        global = true,
         help_heading = "Wallet Options"
     )]
     pub password: Option<String>,
@@ -406,6 +407,9 @@ pub enum WalletCommands {
         /// Private key to import (hex for EVM, base58 for Solana)
         #[arg(short = 'k', long)]
         private_key: Option<String>,
+        /// Set the created wallet as the active payment method in non-interactive mode
+        #[arg(long)]
+        activate: bool,
     },
     /// Show wallet details
     Show {

@@ -206,7 +206,8 @@ fn test_wallet_create_alias_help() {
         .success()
         .stdout(predicate::str::contains("Create a new wallet"))
         .stdout(predicate::str::contains("--type"))
-        .stdout(predicate::str::contains("--private-key"));
+        .stdout(predicate::str::contains("--private-key"))
+        .stdout(predicate::str::contains("--activate"));
 }
 
 #[test]
@@ -218,7 +219,8 @@ fn test_wallet_add_help() {
         .stdout(predicate::str::contains("Create a new wallet"))
         .stdout(predicate::str::contains("--name"))
         .stdout(predicate::str::contains("--type"))
-        .stdout(predicate::str::contains("--private-key"));
+        .stdout(predicate::str::contains("--private-key"))
+        .stdout(predicate::str::contains("--activate"));
 }
 
 #[test]
@@ -363,4 +365,212 @@ fn test_wallet_show_with_color_options() {
         .args(["wallet", "show", "test-wallet", "--color", "never"])
         .assert()
         .success();
+}
+
+#[test]
+fn test_wallet_add_noninteractive_generates_wallet_with_env_password() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args([
+            "wallet",
+            "add",
+            "--type",
+            "evm",
+            "--name",
+            "test-wallet",
+            "--activate",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wallet created"))
+        .stdout(predicate::str::contains("Set as active EVM wallet"));
+
+    test_command(&temp)
+        .args(["wallet", "show", "test-wallet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Name: test-wallet"));
+}
+
+#[test]
+fn test_wallet_add_noninteractive_imports_wallet_with_env_password() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args([
+            "wallet",
+            "add",
+            "--type",
+            "evm",
+            "--name",
+            "imported-wallet",
+            "--private-key",
+            VALID_EVM_KEY,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wallet created"))
+        .stdout(predicate::str::contains("Set as active EVM wallet").not());
+
+    test_command(&temp)
+        .args(["wallet", "show", "imported-wallet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Name: imported-wallet"));
+}
+
+#[test]
+fn test_wallet_add_noninteractive_accepts_password_flag() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .args([
+            "wallet",
+            "add",
+            "--password",
+            "test-password",
+            "--type",
+            "evm",
+            "--name",
+            "flag-wallet",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wallet created"))
+        .stdout(predicate::str::contains("Set as active EVM wallet").not());
+}
+
+#[test]
+fn test_wallet_add_noninteractive_only_activates_with_flag() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args(["wallet", "add", "--type", "evm", "--name", "test-wallet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Wallet created"))
+        .stdout(predicate::str::contains("Set as active EVM wallet").not());
+}
+
+#[test]
+fn test_wallet_add_noninteractive_requires_type() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args(["wallet", "add", "--name", "test-wallet"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "wallet add requires --type in non-interactive mode",
+        ));
+}
+
+#[test]
+fn test_wallet_add_noninteractive_requires_password_source() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .args(["wallet", "add", "--type", "evm", "--name", "test-wallet"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "wallet add requires a password in non-interactive mode; pass --password or set PURL_PASSWORD to continue",
+        ));
+}
+
+#[test]
+fn test_wallet_verify_noninteractive_uses_env_password() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args([
+            "wallet",
+            "add",
+            "--type",
+            "evm",
+            "--name",
+            "verify-wallet",
+            "--private-key",
+            VALID_EVM_KEY,
+            "--activate",
+        ])
+        .assert()
+        .success();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args(["wallet", "verify", "verify-wallet"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Verification successful!"))
+        .stdout(predicate::str::contains("Address:"));
+}
+
+#[test]
+fn test_wallet_verify_noninteractive_accepts_password_flag() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .args([
+            "wallet",
+            "add",
+            "--password",
+            "test-password",
+            "--type",
+            "evm",
+            "--name",
+            "flag-verify-wallet",
+            "--private-key",
+            VALID_EVM_KEY,
+            "--activate",
+        ])
+        .assert()
+        .success();
+
+    test_command(&temp)
+        .args([
+            "wallet",
+            "verify",
+            "--password",
+            "test-password",
+            "flag-verify-wallet",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Verification successful!"));
+}
+
+#[test]
+fn test_wallet_verify_noninteractive_requires_password_source() {
+    let temp = tempfile::TempDir::new().unwrap();
+
+    test_command(&temp)
+        .env("PURL_PASSWORD", "test-password")
+        .args([
+            "wallet",
+            "add",
+            "--type",
+            "evm",
+            "--name",
+            "verify-wallet",
+            "--private-key",
+            VALID_EVM_KEY,
+            "--activate",
+        ])
+        .assert()
+        .success();
+
+    test_command(&temp)
+        .args(["wallet", "verify", "verify-wallet"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "wallet verify requires a password in non-interactive mode; pass --password or set PURL_PASSWORD to continue",
+        ));
 }

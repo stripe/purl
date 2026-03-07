@@ -10,6 +10,7 @@ use dialoguer::{Confirm, Input, Password, Select};
 use purl_lib::keystore::{create_keystore, create_solana_keystore, list_keystores, Keystore};
 use purl_lib::Config;
 use solana_sdk::signature::{Keypair, Signer};
+use std::io::IsTerminal;
 use std::path::PathBuf;
 
 /// Create a clickable address link with shortened display text
@@ -32,6 +33,54 @@ fn short_address_link(address: &str, chain_type: &str) -> String {
     } else {
         short
     }
+}
+
+fn can_prompt() -> bool {
+    std::io::stdin().is_terminal() && std::io::stdout().is_terminal()
+}
+
+fn password_from_cli_or_env(password: Option<String>) -> Option<String> {
+    if let Some(password) = password.filter(|password| !password.is_empty()) {
+        return Some(password);
+    }
+
+    std::env::var("PURL_PASSWORD")
+        .ok()
+        .filter(|password| !password.is_empty())
+}
+
+fn create_wallet_password(password: Option<String>) -> Result<String> {
+    if let Some(password) = password_from_cli_or_env(password) {
+        return Ok(password);
+    }
+
+    if !can_prompt() {
+        anyhow::bail!(
+            "wallet add requires a password in non-interactive mode; pass --password or set PURL_PASSWORD to continue"
+        );
+    }
+
+    Ok(Password::new()
+        .with_prompt("Create password")
+        .with_confirmation("Confirm password", "Passwords do not match")
+        .interact()?)
+}
+
+fn verification_password(password: Option<String>) -> Result<String> {
+    if let Some(password) = password_from_cli_or_env(password) {
+        return Ok(password);
+    }
+
+    if !can_prompt() {
+        anyhow::bail!(
+            "wallet verify requires a password in non-interactive mode; pass --password or set PURL_PASSWORD to continue"
+        );
+    }
+
+    Ok(Password::new()
+        .with_prompt("Enter password to verify wallet integrity")
+        .allow_empty_password(false)
+        .interact()?)
 }
 
 /// List all available wallets in the wallets directory
@@ -225,10 +274,18 @@ pub fn add_command(
     name: Option<String>,
     wallet_type: Option<WalletType>,
     private_key: Option<String>,
+    activate: bool,
+    password: Option<String>,
 ) -> Result<()> {
+    let prompt_available = can_prompt();
+
     // Step 1: Select wallet type
     let wallet_type = if let Some(t) = wallet_type {
         t
+    } else if !prompt_available {
+        anyhow::bail!(
+            "wallet add requires --type in non-interactive mode; pass --type evm or --type solana"
+        );
     } else {
         let options = vec![
             format!(
@@ -254,6 +311,8 @@ pub fn add_command(
     // Step 2: Generate or import?
     let (is_generate, key_to_import) = if let Some(key) = private_key {
         (false, Some(key))
+    } else if !prompt_available {
+        (true, None)
     } else {
         let options = vec!["Generate new key", "Import existing key"];
 
@@ -356,10 +415,7 @@ pub fn add_command(
     };
 
     // Step 4: Password
-    let password = Password::new()
-        .with_prompt("Create password")
-        .with_confirmation("Confirm password", "Passwords do not match")
-        .interact()?;
+    let password = create_wallet_password(password)?;
 
     // Step 5: Wallet name
     let default_name = match wallet_type {
@@ -369,6 +425,8 @@ pub fn add_command(
 
     let wallet_name = if let Some(n) = name {
         n
+    } else if !prompt_available {
+        default_name.to_string()
     } else {
         Input::new()
             .with_prompt("Wallet name")
@@ -420,10 +478,14 @@ pub fn add_command(
     println!();
 
     // Step 8: Ask to set as active
-    let set_active = Confirm::new()
-        .with_prompt("Set as active wallet?")
-        .default(true)
-        .interact()?;
+    let set_active = if prompt_available {
+        Confirm::new()
+            .with_prompt("Set as active wallet?")
+            .default(true)
+            .interact()?
+    } else {
+        activate
+    };
 
     if set_active {
         match wallet_type {
@@ -617,7 +679,7 @@ pub fn show_command(name: &str) -> Result<()> {
 /// - The wallet format is invalid
 /// - The password is incorrect
 /// - The stored address doesn't match the derived address (indicating corruption)
-pub fn verify_command(name: &str) -> Result<()> {
+pub fn verify_command(name: &str, password: Option<String>) -> Result<()> {
     let keystore_path = find_keystore_by_name(name)?;
     let keystore = Keystore::load(&keystore_path)?;
 
@@ -625,13 +687,17 @@ pub fn verify_command(name: &str) -> Result<()> {
     println!();
 
     match keystore.content.get("chain").and_then(|v| v.as_str()) {
-        Some("solana") => verify_solana_wallet(&keystore, &keystore_path),
-        _ => verify_evm_wallet(&keystore),
+        Some("solana") => verify_solana_wallet(&keystore, &keystore_path, password),
+        _ => verify_evm_wallet(&keystore, password),
     }
 }
 
 /// Verify a Solana wallet
-fn verify_solana_wallet(keystore: &Keystore, keystore_path: &std::path::Path) -> Result<()> {
+fn verify_solana_wallet(
+    keystore: &Keystore,
+    keystore_path: &std::path::Path,
+    password: Option<String>,
+) -> Result<()> {
     // Validate format - Solana keystores should have crypto field
     if keystore.content.get("crypto").is_some() {
         println!("{} Wallet format is valid", "[OK]".green());
@@ -651,10 +717,7 @@ fn verify_solana_wallet(keystore: &Keystore, keystore_path: &std::path::Path) ->
         println!("{} Public key field missing", "[WARN]".yellow());
     }
 
-    let password = Password::new()
-        .with_prompt("Enter password to verify wallet integrity")
-        .allow_empty_password(false)
-        .interact()?;
+    let password = verification_password(password)?;
 
     // Use Solana-specific decryption
     match purl_lib::keystore::decrypt_solana_keystore(keystore_path, Some(&password)) {
@@ -706,7 +769,7 @@ fn verify_solana_wallet(keystore: &Keystore, keystore_path: &std::path::Path) ->
 }
 
 /// Verify an EVM wallet
-fn verify_evm_wallet(keystore: &Keystore) -> Result<()> {
+fn verify_evm_wallet(keystore: &Keystore, password: Option<String>) -> Result<()> {
     match keystore.validate() {
         Ok(()) => {
             println!("{} Wallet format is valid", "[OK]".green());
@@ -723,10 +786,7 @@ fn verify_evm_wallet(keystore: &Keystore) -> Result<()> {
         println!("{} Address field missing", "[WARN]".yellow());
     }
 
-    let password = Password::new()
-        .with_prompt("Enter password to verify wallet integrity")
-        .allow_empty_password(false)
-        .interact()?;
+    let password = verification_password(password)?;
 
     match keystore.decrypt(&password) {
         Ok(private_key_bytes) => {
