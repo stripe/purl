@@ -353,7 +353,10 @@ pub fn add_command(
         }
     };
 
-    // Step 3: Generate key if needed
+    // Step 3: Resolve password before generating or displaying new secrets
+    let password = create_wallet_password(password)?;
+
+    // Step 4: Generate key if needed
     let (private_key_value, display_info) = match wallet_type {
         WalletType::Evm => {
             let key = if is_generate {
@@ -413,9 +416,6 @@ pub fn add_command(
             (keypair_b58, "Solana")
         }
     };
-
-    // Step 4: Password
-    let password = create_wallet_password(password)?;
 
     // Step 5: Wallet name
     let default_name = match wallet_type {

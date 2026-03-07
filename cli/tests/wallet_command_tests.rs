@@ -478,6 +478,7 @@ fn test_wallet_add_noninteractive_requires_password_source() {
         .args(["wallet", "add", "--type", "evm", "--name", "test-wallet"])
         .assert()
         .failure()
+        .stdout(predicate::str::contains("Generated private key").not())
         .stderr(predicate::str::contains(
             "wallet add requires a password in non-interactive mode; pass --password or set PURL_PASSWORD to continue",
         ));
