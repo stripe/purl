@@ -1,7 +1,7 @@
 //! Payment requirement negotiation logic.
 
 use crate::config::{Config, PaymentMethod};
-use crate::error::{PurlError, Result};
+use crate::error::{CompatibilityReason, PurlError, Result};
 use crate::x402::{Amount, PaymentRequirements, PaymentRequirementsResponse};
 
 /// Service to handle 402 Payment Required negotiation.
@@ -95,37 +95,61 @@ impl<'a> PaymentNegotiator<'a> {
             return Err(PurlError::NoPaymentMethods);
         }
 
-        // Single-pass find with all conditions
+        // Single-pass find while preserving the first rejection reason category.
         let accepts = requirements.accepts();
-        accepts
-            .into_iter()
-            .find(|req| self.is_compatible(req, &available_methods))
-            .ok_or_else(|| {
-                let accepts = requirements.accepts();
-                let networks: Vec<String> =
-                    accepts.iter().map(|r| r.network().to_string()).collect();
-                PurlError::NoCompatibleMethod { networks }
+        let mut networks = Vec::with_capacity(accepts.len());
+        let mut network_filtered = false;
+        let mut unsupported_token: Option<(String, String)> = None;
+        let mut missing_chains: Vec<String> = Vec::new();
+
+        for requirement in accepts {
+            networks.push(requirement.network().to_string());
+
+            if !self.matches_network_filter(&requirement) {
+                network_filtered = true;
+                continue;
+            }
+
+            if let Err(err) = self.validate_token_support(&requirement) {
+                if let PurlError::TokenConfigNotFound { network, asset } = err {
+                    unsupported_token.get_or_insert((network, asset));
+                }
+                continue;
+            }
+
+            if !self.has_compatible_method(&requirement, &available_methods) {
+                let chain = if requirement.is_evm() {
+                    "evm"
+                } else if requirement.is_solana() {
+                    "solana"
+                } else {
+                    "unknown"
+                };
+
+                if !missing_chains.iter().any(|existing| existing == chain) {
+                    missing_chains.push(chain.to_string());
+                }
+                continue;
+            }
+
+            return Ok(requirement);
+        }
+
+        let reason = if !missing_chains.is_empty() {
+            Some(CompatibilityReason::MissingWallet {
+                required_chains: missing_chains,
             })
-    }
+        } else if let Some((network, asset)) = unsupported_token {
+            Some(CompatibilityReason::UnsupportedToken { network, asset })
+        } else if network_filtered && !self.allowed_networks.is_empty() {
+            Some(CompatibilityReason::NetworkFiltered {
+                allowed_networks: self.allowed_networks.clone(),
+            })
+        } else {
+            None
+        };
 
-    /// Check if a requirement is compatible with current configuration.
-    fn is_compatible(
-        &self,
-        requirement: &PaymentRequirements,
-        available_methods: &[PaymentMethod],
-    ) -> bool {
-        // Check network filter
-        if !self.matches_network_filter(requirement) {
-            return false;
-        }
-
-        // Check token support (has decimals configured)
-        if !self.has_token_support(requirement) {
-            return false;
-        }
-
-        // Check if we have a compatible payment method
-        self.has_compatible_method(requirement, available_methods)
+        Err(PurlError::NoCompatibleMethod { networks, reason })
     }
 
     /// Check if the requirement's network passes the filter.
@@ -142,10 +166,10 @@ impl<'a> PaymentNegotiator<'a> {
             .any(|network| network == requirement_network)
     }
 
-    /// Check if the token is supported (has decimals configured).
+    /// Validate token support (token must have decimals configured).
     #[inline]
-    fn has_token_support(&self, requirement: &PaymentRequirements) -> bool {
-        crate::constants::get_token_decimals(requirement.network(), requirement.asset()).is_ok()
+    fn validate_token_support(&self, requirement: &PaymentRequirements) -> Result<()> {
+        crate::constants::get_token_decimals(requirement.network(), requirement.asset()).map(|_| ())
     }
 
     /// Check if we have a compatible payment method for this requirement.
@@ -183,7 +207,8 @@ impl<'a> PaymentNegotiator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, EvmConfig};
+    use crate::config::{Config, EvmConfig, SolanaConfig};
+    use crate::error::CompatibilityReason;
     use crate::x402::v2;
 
     fn make_test_config() -> Config {
@@ -192,6 +217,16 @@ mod tests {
                 keystore: Some(std::path::PathBuf::from("/path/to/evm.json")),
             }),
             solana: None,
+            ..Default::default()
+        }
+    }
+
+    fn make_test_solana_config() -> Config {
+        Config {
+            evm: None,
+            solana: Some(SolanaConfig {
+                keystore: Some(std::path::PathBuf::from("/path/to/solana.json")),
+            }),
             ..Default::default()
         }
     }
@@ -251,6 +286,50 @@ mod tests {
         })
     }
 
+    fn make_test_solana_known_token_requirement() -> PaymentRequirementsResponse {
+        PaymentRequirementsResponse::V2(v2::PaymentRequired {
+            x402_version: 2,
+            error: None,
+            accepts: vec![v2::PaymentRequirements {
+                scheme: "exact".to_string(),
+                network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".to_string(),
+                amount: "10000".to_string(),
+                asset: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v".to_string(),
+                pay_to: "11111111111111111111111111111111".to_string(),
+                max_timeout_seconds: 60,
+                extra: None,
+            }],
+            resource: v2::ResourceInfo {
+                url: "https://example.com/paid".to_string(),
+                description: None,
+                mime_type: None,
+            },
+            extensions: None,
+        })
+    }
+
+    fn make_test_solana_unknown_token_requirement() -> PaymentRequirementsResponse {
+        PaymentRequirementsResponse::V2(v2::PaymentRequired {
+            x402_version: 2,
+            error: None,
+            accepts: vec![v2::PaymentRequirements {
+                scheme: "exact".to_string(),
+                network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".to_string(),
+                amount: "10000".to_string(),
+                asset: "11111111111111111111111111111111".to_string(),
+                pay_to: "11111111111111111111111111111111".to_string(),
+                max_timeout_seconds: 60,
+                extra: None,
+            }],
+            resource: v2::ResourceInfo {
+                url: "https://example.com/paid".to_string(),
+                description: None,
+                mime_type: None,
+            },
+            extensions: None,
+        })
+    }
+
     #[test]
     fn test_negotiator_selects_compatible_requirement() {
         let config = make_test_config();
@@ -291,7 +370,13 @@ mod tests {
             PaymentNegotiator::new(&config).with_allowed_networks(&["ethereum".to_string()]);
         let result = negotiator.select_from_requirements(&requirements);
 
-        assert!(result.is_err());
+        assert!(matches!(
+            result,
+            Err(PurlError::NoCompatibleMethod {
+                reason: Some(CompatibilityReason::NetworkFiltered { .. }),
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -356,5 +441,39 @@ mod tests {
         let selected = result.unwrap();
         assert!(selected.is_evm());
         assert_eq!(selected.network(), "eip155:8453");
+    }
+
+    #[test]
+    fn test_negotiator_reports_missing_wallet_reason() {
+        let config = make_test_config();
+        let requirements = make_test_solana_known_token_requirement();
+
+        let negotiator = PaymentNegotiator::new(&config);
+        let result = negotiator.select_from_requirements(&requirements);
+
+        assert!(matches!(
+            result,
+            Err(PurlError::NoCompatibleMethod {
+                reason: Some(CompatibilityReason::MissingWallet { .. }),
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn test_negotiator_reports_unsupported_token_reason() {
+        let config = make_test_solana_config();
+        let requirements = make_test_solana_unknown_token_requirement();
+
+        let negotiator = PaymentNegotiator::new(&config);
+        let result = negotiator.select_from_requirements(&requirements);
+
+        assert!(matches!(
+            result,
+            Err(PurlError::NoCompatibleMethod {
+                reason: Some(CompatibilityReason::UnsupportedToken { .. }),
+                ..
+            })
+        ));
     }
 }

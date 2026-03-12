@@ -253,6 +253,7 @@ mod tests {
     use super::*;
     use crate::payment_provider::PaymentProvider;
     use crate::x402::{v2, PaymentRequirements as UnifiedRequirements};
+    use serial_test::serial;
 
     const TEST_EVM_KEY: &str = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
@@ -300,6 +301,7 @@ mod tests {
     }
 
     #[test]
+    #[serial(home_env)]
     fn test_dry_run_with_keystore_override() {
         let temp_dir = tempfile::TempDir::new().expect("create temp dir");
 

@@ -5,6 +5,17 @@ use thiserror::Error;
 /// Result type alias for purl operations.
 pub type Result<T> = std::result::Result<T, PurlError>;
 
+/// Reason why no compatible payment method could be selected.
+#[derive(Debug, Clone)]
+pub enum CompatibilityReason {
+    /// A compatible requirement exists, but no wallet is configured for that chain.
+    MissingWallet { required_chains: Vec<String> },
+    /// The requirement uses a token that is not configured in purl.
+    UnsupportedToken { network: String, asset: String },
+    /// All requirements were excluded by the `--network` filter.
+    NetworkFiltered { allowed_networks: Vec<String> },
+}
+
 #[derive(Error, Debug)]
 pub enum PurlError {
     #[error("Network '{0}' is not supported. Run `purl networks list` to see available networks.")]
@@ -13,8 +24,11 @@ pub enum PurlError {
     #[error("No wallet configured. Run `purl wallet create` to create a new wallet, or `purl wallet import` to import an existing one.")]
     NoPaymentMethods,
 
-    #[error("This payment requires a wallet for {networks:?}, but you don't have one configured. Run `purl wallet create` to add one.")]
-    NoCompatibleMethod { networks: Vec<String> },
+    #[error("No compatible payment method found for {networks:?}.")]
+    NoCompatibleMethod {
+        networks: Vec<String>,
+        reason: Option<CompatibilityReason>,
+    },
 
     #[error("Payment amount {required} exceeds your limit of {max}. Increase your limit with `--max-amount` or decline this payment.")]
     AmountExceedsMax { required: u128, max: u128 },

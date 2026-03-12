@@ -4,6 +4,7 @@
 //! for how to fix common problems.
 
 use crate::colors::Colors;
+use purl_lib::error::CompatibilityReason;
 use purl_lib::PurlError;
 
 /// Get a suggestion for how to fix an error, if available.
@@ -75,12 +76,35 @@ fn get_purl_error_suggestion(err: &PurlError) -> Option<String> {
 
         PurlError::InvalidPassword => Some("Check your keystore password and try again.".into()),
 
-        PurlError::NoCompatibleMethod { networks } => {
+        PurlError::NoCompatibleMethod { networks, reason } => {
             let networks_str = networks.join(", ");
-            Some(format!(
-                "Server accepts: {networks_str}\n\
-                 Configure a wallet for one of these networks with 'purl wallet add'."
-            ))
+            match reason {
+                Some(CompatibilityReason::MissingWallet { required_chains }) => {
+                    let chains = required_chains.join(", ");
+                    Some(format!(
+                        "Server accepts: {networks_str}\n\
+                         Missing configured wallet for: {chains}\n\
+                         Add one with 'purl wallet add' and activate with 'purl wallet use <name>'."
+                    ))
+                }
+                Some(CompatibilityReason::UnsupportedToken { network, asset }) => Some(format!(
+                    "Server accepts: {networks_str}\n\
+                     Token {asset} is not configured for {network}.\n\
+                     Add it in ~/.purl/config.toml under [[tokens]], or use an endpoint/network with a supported token."
+                )),
+                Some(CompatibilityReason::NetworkFiltered { allowed_networks }) => {
+                    let allowed = allowed_networks.join(", ");
+                    Some(format!(
+                        "Server accepts: {networks_str}\n\
+                         Your --network filter excludes all accepted networks (allowed: {allowed}).\n\
+                         Remove or adjust --network."
+                    ))
+                }
+                None => Some(format!(
+                    "Server accepts: {networks_str}\n\
+                     No compatible method was found. Check wallet configuration, network filters, and token support."
+                )),
+            }
         }
 
         PurlError::AmountExceedsMax { required, max } => Some(format!(
@@ -235,9 +259,9 @@ fn get_related_commands(err: &anyhow::Error) -> Option<Vec<&'static str>> {
                 "purl config            # View current configuration",
             ]),
             PurlError::NoCompatibleMethod { .. } => Some(vec![
-                "purl networks list     # See supported networks",
-                "purl wallet new        # Create a new wallet",
                 "purl inspect <url>     # Check payment requirements",
+                "purl wallet list       # Show configured wallets",
+                "purl wallet add        # Add a wallet",
             ]),
             PurlError::AmountExceedsMax { .. } => Some(vec![
                 "purl inspect <url>     # Check payment requirements",
@@ -305,5 +329,36 @@ mod tests {
         let suggestion = get_purl_error_suggestion(&err);
         assert!(suggestion.is_some());
         assert!(suggestion.unwrap().contains("purl networks list"));
+    }
+
+    #[test]
+    fn test_no_compatible_method_missing_wallet_suggestion() {
+        let err = PurlError::NoCompatibleMethod {
+            networks: vec!["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".into()],
+            reason: Some(CompatibilityReason::MissingWallet {
+                required_chains: vec!["solana".into()],
+            }),
+        };
+        let suggestion = get_purl_error_suggestion(&err);
+        assert!(suggestion.is_some());
+        let suggestion = suggestion.unwrap();
+        assert!(suggestion.contains("Missing configured wallet"));
+        assert!(suggestion.contains("purl wallet add"));
+    }
+
+    #[test]
+    fn test_no_compatible_method_unsupported_token_suggestion() {
+        let err = PurlError::NoCompatibleMethod {
+            networks: vec!["solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".into()],
+            reason: Some(CompatibilityReason::UnsupportedToken {
+                network: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp".into(),
+                asset: "11111111111111111111111111111111".into(),
+            }),
+        };
+        let suggestion = get_purl_error_suggestion(&err);
+        assert!(suggestion.is_some());
+        let suggestion = suggestion.unwrap();
+        assert!(suggestion.contains("not configured"));
+        assert!(suggestion.contains("[[tokens]]"));
     }
 }

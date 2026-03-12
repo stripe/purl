@@ -268,7 +268,7 @@ fn select_payment_requirement(
 
     negotiator
         .select_from_requirements(requirements)
-        .map_err(|e| anyhow::anyhow!("{e}"))
+        .map_err(anyhow::Error::from)
 }
 
 /// Create a payment payload for the selected requirement

@@ -419,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    #[serial]
+    #[serial(home_env)]
     fn test_keystore_creation_and_listing() {
         let temp_dir = TempDir::new().unwrap();
         setup_temp_home(&temp_dir);
@@ -437,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    #[serial]
+    #[serial(home_env)]
     fn test_decrypt_keystore() {
         let temp_dir = TempDir::new().unwrap();
         setup_temp_home(&temp_dir);
