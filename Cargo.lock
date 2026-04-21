@@ -129,7 +129,7 @@ dependencies = [
  "alloy-rpc-types",
  "alloy-serde 1.8.3",
  "alloy-signer 1.8.3",
- "alloy-signer-local",
+ "alloy-signer-local 1.8.3",
  "alloy-transport 1.8.3",
  "alloy-transport-http 1.8.3",
  "alloy-transport-ipc",
@@ -989,6 +989,22 @@ dependencies = [
  "alloy-network 1.8.3",
  "alloy-primitives",
  "alloy-signer 1.8.3",
+ "async-trait",
+ "k256",
+ "rand 0.8.5",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "alloy-signer-local"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3c67d2372aada343130d41e249b59a3cef29b1678dcd3fd80f1c2c4d6b5318f2"
+dependencies = [
+ "alloy-consensus 2.0.0",
+ "alloy-network 2.0.0",
+ "alloy-primitives",
+ "alloy-signer 2.0.0",
  "async-trait",
  "k256",
  "rand 0.8.5",
@@ -5584,7 +5600,7 @@ version = "0.2.6"
 dependencies = [
  "alloy",
  "alloy-provider 2.0.0",
- "alloy-signer-local",
+ "alloy-signer-local 2.0.0",
  "alloy-transport-http 2.0.0",
  "anyhow",
  "assert_cmd",
@@ -5623,7 +5639,7 @@ dependencies = [
  "aes",
  "alloy",
  "alloy-signer 2.0.0",
- "alloy-signer-local",
+ "alloy-signer-local 2.0.0",
  "async-trait",
  "base64 0.22.1",
  "bincode",
@@ -10301,7 +10317,7 @@ dependencies = [
  "alloy-provider 1.8.3",
  "alloy-rpc-types-eth 1.8.3",
  "alloy-serde 1.8.3",
- "alloy-signer-local",
+ "alloy-signer-local 1.8.3",
  "alloy-transport 1.8.3",
  "async-trait",
  "dashmap 6.1.0",
