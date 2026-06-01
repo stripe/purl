@@ -80,14 +80,20 @@ impl<'a> PaymentNegotiator<'a> {
             return Err(PurlError::NoPaymentMethods);
         }
 
-        // First pass: prefer challenges with a direct wallet match
+        // Only native Tempo MPP challenges can be paid through the MPP provider.
+        // Other Payment-auth challenges should not block a valid x402 offer.
+        let is_payable_challenge = |challenge: &dyn PaymentChallenge| {
+            challenge.protocol_name() != crate::mpp::protocol::PROTOCOL_NAME || challenge.is_tempo()
+        };
+
         let selected = challenges
             .iter()
+            .filter(|c| is_payable_challenge(c.as_ref()))
             .find(|c| self.is_challenge_direct_match(c.as_ref(), &available_methods))
-            // Second pass: accept compatibility matches (e.g. Tempo via EVM wallet)
             .or_else(|| {
                 challenges
                     .iter()
+                    .filter(|c| is_payable_challenge(c.as_ref()))
                     .find(|c| self.is_challenge_compatible(c.as_ref(), &available_methods))
             })
             .ok_or_else(|| {
@@ -718,6 +724,63 @@ mod tests {
         // Should pick x402 (direct EVM match) over MPP (EVM fallback)
         assert_eq!(selected.protocol_name(), "x402");
         assert_eq!(selected.network(), "base-sepolia");
+    }
+
+    #[test]
+    fn test_select_challenge_skips_non_tempo_mpp_before_x402() {
+        use crate::mpp::MppChallenge;
+        use mpp::protocol::core::Base64UrlJson;
+
+        let config = make_test_config();
+
+        let request_json = serde_json::json!({
+            "amount": "10000",
+            "currency": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+            "methodDetails": {
+                "chainId": 84532,
+                "credentialTypes": ["authorization"],
+                "decimals": 6
+            },
+            "recipient": "0x1234",
+        });
+        let request = Base64UrlJson::from_value(&request_json).unwrap();
+        let inner = mpp::PaymentChallenge::new(
+            "test-id".to_string(),
+            "https://example.com/api",
+            "evm",
+            "charge",
+            request,
+        );
+        let mpp_challenge = MppChallenge::from_mpp_challenge(inner).unwrap();
+
+        let x402_challenge = PaymentRequirements::V2 {
+            requirements: v2::PaymentRequirements {
+                scheme: "exact".to_string(),
+                network: "eip155:84532".to_string(),
+                amount: "10000".to_string(),
+                asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
+                pay_to: "0x1234".to_string(),
+                max_timeout_seconds: 300,
+                extra: Some(serde_json::json!({"name": "USDC", "version": "2"})),
+            },
+            resource_info: v2::ResourceInfo {
+                url: "https://example.com/api".to_string(),
+                description: None,
+                mime_type: None,
+            },
+        };
+
+        let challenges: Vec<Box<dyn PaymentChallenge>> =
+            vec![Box::new(mpp_challenge), Box::new(x402_challenge)];
+
+        let negotiator = PaymentNegotiator::new(&config);
+        let result = negotiator.select_challenge(&challenges);
+
+        assert!(result.is_ok(), "Expected Ok, got: {result:?}");
+        let selected = result.unwrap();
+        assert_eq!(selected.protocol_name(), "x402");
+        assert_eq!(selected.scheme(), "exact");
+        assert_eq!(selected.network(), "eip155:84532");
     }
 
     #[test]
