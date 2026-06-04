@@ -174,7 +174,7 @@ pub async fn handle_payment_request(
         }
     }
 
-    display_settlement_info(&request_ctx.cli, protocol, &response)?;
+    display_settlement_info(&request_ctx.cli, protocol, &response, payment_payload.x402_version)?;
 
     Ok(response)
 }
@@ -339,10 +339,9 @@ fn format_payment_amount(challenge: &dyn PaymentChallenge) -> (String, String) {
         let amount_str = if frac == 0 {
             format!("{whole} {symbol}")
         } else {
-            format!(
-                "{whole}.{frac:0>width$} {symbol}",
-                width = decimals as usize
-            )
+            let frac_str = format!("{frac:0>width$}", width = decimals as usize);
+            let trimmed = frac_str.trim_end_matches('0');
+            format!("{whole}.{trimmed} {symbol}")
         };
 
         (amount_str, symbol.to_string())
@@ -393,11 +392,12 @@ fn display_settlement_info(
     cli: &Cli,
     protocol: &dyn PaymentProtocol,
     response: &HttpResponse,
+    version: u32,
 ) -> Result<()> {
     use crate::hyperlink::{address_link, tx_link};
 
     // Use protocol to get the receipt header name and parse the receipt
-    if let Some(receipt_json) = protocol.parse_receipt_json(response, 1).ok().flatten() {
+    if let Some(receipt_json) = protocol.parse_receipt_json(response, version).ok().flatten() {
         let settlement: SettlementResponse =
             serde_json::from_str(&receipt_json).context("Failed to parse settlement response")?;
 
