@@ -18,6 +18,8 @@ pub mod networks {
     pub const POLYGON: &str = "polygon";
     pub const ARBITRUM: &str = "arbitrum";
     pub const OPTIMISM: &str = "optimism";
+    pub const XDC: &str = "xdc";
+    pub const XDC_TESTNET: &str = "xdc-testnet";
     pub const SOLANA: &str = "solana";
     pub const SOLANA_DEVNET: &str = "solana-devnet";
     pub const TEMPO: &str = "tempo";
@@ -138,6 +140,26 @@ const BUILTIN_NETWORKS: &[BuiltinNetwork] = &[
         rpc_url: "https://mainnet.optimism.io",
         aliases: &["eip155:10"],
         explorer_url: Some("https://optimistic.etherscan.io"),
+    },
+    BuiltinNetwork {
+        id: networks::XDC,
+        chain_type: ChainType::Evm,
+        chain_id: Some(50),
+        mainnet: true,
+        display_name: "XDC Network",
+        rpc_url: "https://rpc.xdc.org",
+        aliases: &["eip155:50"],
+        explorer_url: Some("https://xdcscan.com"),
+    },
+    BuiltinNetwork {
+        id: networks::XDC_TESTNET,
+        chain_type: ChainType::Evm,
+        chain_id: Some(51),
+        mainnet: false,
+        display_name: "XDC Apothem Testnet",
+        rpc_url: "https://rpc.apothem.network",
+        aliases: &["eip155:51"],
+        explorer_url: Some("https://testnet.xdcscan.com"),
     },
     BuiltinNetwork {
         id: networks::SOLANA,
