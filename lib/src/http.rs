@@ -6,6 +6,24 @@ use std::time::Duration;
 
 pub use reqwest::Method as HttpMethod;
 
+const DEFAULT_USER_AGENT: &str = concat!("purl/", env!("CARGO_PKG_VERSION"));
+
+/// Selects the client-level User-Agent, unless a request header already provides one.
+/// Explicit values override the purl default, while request headers take precedence over both.
+fn client_user_agent<'a>(
+    headers: &[(String, String)],
+    explicit: Option<&'a str>,
+) -> Option<&'a str> {
+    if headers
+        .iter()
+        .any(|(name, _)| name.eq_ignore_ascii_case("user-agent"))
+    {
+        None
+    } else {
+        Some(explicit.unwrap_or(DEFAULT_USER_AGENT))
+    }
+}
+
 #[derive(Debug)]
 pub struct HttpResponse {
     pub status_code: u32,
@@ -113,8 +131,8 @@ impl HttpClientBuilder {
             builder = builder.timeout(Duration::from_secs(timeout));
         }
 
-        if let Some(ref ua) = self.user_agent {
-            builder = builder.user_agent(ua);
+        if let Some(user_agent) = client_user_agent(&self.headers, self.user_agent.as_deref()) {
+            builder = builder.user_agent(user_agent);
         }
 
         let client = builder.build()?;
@@ -205,5 +223,33 @@ impl HttpClient {
             headers,
             body: body.to_vec(),
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_user_agent() {
+        assert_eq!(
+            client_user_agent(&[], None),
+            Some(concat!("purl/", env!("CARGO_PKG_VERSION")))
+        );
+    }
+
+    #[test]
+    fn user_agent_header_takes_precedence() {
+        let headers = vec![("uSeR-aGeNt".to_string(), "CustomBot/1.0".to_string())];
+
+        assert_eq!(client_user_agent(&headers, Some("IgnoredAgent/0.0")), None);
+    }
+
+    #[test]
+    fn explicit_user_agent_overrides_default() {
+        assert_eq!(
+            client_user_agent(&[], Some("CustomBot/2.0")),
+            Some("CustomBot/2.0")
+        );
     }
 }
