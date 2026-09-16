@@ -311,17 +311,18 @@ impl PaymentProvider for SolanaProvider {
         let associated_token_address =
             spl_associated_token_account::get_associated_token_address(&owner_pubkey, &token_mint);
 
-        let balance = match client.get_token_account_balance(&associated_token_address) {
-            Ok(token_balance) => token_balance.ui_amount.unwrap_or(0.0),
-            Err(_) => 0.0,
+        let balance_atomic_str = match client.get_token_account_balance(&associated_token_address)
+        {
+            Ok(token_balance) => token_balance.amount,
+            Err(_) => "0".to_string(),
         };
 
-        let balance_atomic = (balance * token_config.currency.divisor as f64) as u64;
-        let balance_human = token_config.currency.format_atomic(balance_atomic as u128);
+        let balance_atomic: u128 = balance_atomic_str.parse().unwrap_or(0);
+        let balance_human = token_config.currency.format_atomic(balance_atomic);
 
         Ok(NetworkBalance {
             network: network.to_string(),
-            balance_atomic: balance_atomic.to_string(),
+            balance_atomic: balance_atomic_str,
             balance_human,
             asset: token_config.currency.symbol.to_string(),
         })
