@@ -51,11 +51,7 @@ impl MppChallenge {
         let request = super::policy::decode_and_validate(&challenge)?;
 
         // Extract fields from the request
-        let amount = request
-            .get("amount")
-            .and_then(|v| v.as_str())
-            .unwrap_or("0")
-            .to_string();
+        let amount = super::policy::require_amount(&request)?.to_string();
         let asset = request
             .get("currency")
             .and_then(|v| v.as_str())
@@ -64,11 +60,7 @@ impl MppChallenge {
         let recipient = super::policy::require_recipient(&request)?.to_string();
 
         // Get chain ID from methodDetails if available
-        let chain_id = request
-            .get("methodDetails")
-            .and_then(|md| md.get("chainId"))
-            .and_then(|v| v.as_u64())
-            .unwrap_or(42431); // Default to Tempo Moderato
+        let chain_id = super::policy::tempo_chain_id(&request)?;
 
         // Determine network from method and chain ID
         let network = format!("eip155:{}", chain_id);
@@ -274,14 +266,11 @@ mod tests {
     }
 
     #[test]
-    fn test_mpp_challenge_missing_fields_default() {
-        // Missing every optional field. The recipient is not optional: purl cannot
-        // display a payment destination it was never given.
-        let challenge = make_challenge("tempo", serde_json::json!({ "recipient": "0x1234" }));
+    fn test_mpp_challenge_missing_amount_is_rejected() {
+        let error =
+            try_make_challenge("tempo", serde_json::json!({ "recipient": "0x1234" })).unwrap_err();
 
-        assert_eq!(challenge.amount(), "0");
-        assert_eq!(challenge.asset(), "");
-        assert_eq!(challenge.description(), "");
+        assert!(error.to_string().contains("missing required field: amount"));
     }
 
     /// `super::policy` owns the per-rule cases; this only proves construction is

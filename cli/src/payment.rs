@@ -33,7 +33,7 @@ pub async fn handle_payment_request(
             eprintln!("    Network:     {}", challenge.network());
 
             // Format amount with human-readable display
-            let (amount_display, asset_symbol) = format_challenge_amount(challenge.as_ref());
+            let (amount_display, asset_symbol) = format_challenge_amount(challenge.as_ref())?;
             eprintln!("    Amount:      {}", amount_display);
             eprintln!("    Asset:       {} ({})", asset_symbol, challenge.asset());
             eprintln!("    Recipient:   {}", challenge.recipient());
@@ -67,7 +67,7 @@ pub async fn handle_payment_request(
         .with_context(|| format!("Unknown protocol: {}", selected.protocol_name()))?;
 
     if request_ctx.cli.is_verbose() && request_ctx.cli.should_show_output() {
-        let (amount_display, _) = format_challenge_amount(selected);
+        let (amount_display, _) = format_challenge_amount(selected)?;
         eprintln!(
             "Selected: {} on {} for {} (protocol: {})",
             selected.scheme(),
@@ -195,7 +195,7 @@ fn handle_dry_run(config: &Config, challenge: &dyn PaymentChallenge) -> Result<H
             &dry_run_info.network,
             &dry_run_info.asset,
             &dry_run_info.amount,
-        );
+        )?;
 
         println!("[DRY RUN] Payment would be made:");
         println!("Provider: {}", dry_run_info.provider);
@@ -214,7 +214,7 @@ fn handle_dry_run(config: &Config, challenge: &dyn PaymentChallenge) -> Result<H
 }
 
 /// Format a challenge's amount for verbose display
-fn format_challenge_amount(challenge: &dyn PaymentChallenge) -> (String, String) {
+fn format_challenge_amount(challenge: &dyn PaymentChallenge) -> Result<(String, String)> {
     let network = challenge.network();
     let asset = challenge.asset();
     let amount = challenge.amount();
@@ -222,7 +222,7 @@ fn format_challenge_amount(challenge: &dyn PaymentChallenge) -> (String, String)
     // Try to get token info from registry
     if let Ok(decimals) = purl_lib::constants::get_token_decimals(network, asset) {
         let symbol = purl_lib::constants::get_token_symbol(network, asset).unwrap_or(asset);
-        let amount_u128: u128 = amount.parse().unwrap_or(0);
+        let amount_u128 = parse_display_amount(amount)?;
         let divisor = 10u128.pow(decimals as u32);
         let whole = amount_u128 / divisor;
         let frac = amount_u128 % divisor;
@@ -236,19 +236,19 @@ fn format_challenge_amount(challenge: &dyn PaymentChallenge) -> (String, String)
             format!("{}.{} {}", whole, trimmed, symbol)
         };
 
-        (amount_str, symbol.to_string())
+        Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw values
-        (format!("{} (atomic)", amount), asset.to_string())
+        Ok((format!("{} (atomic)", amount), asset.to_string()))
     }
 }
 
 /// Format amount and asset for dry run display
-fn format_dry_run_amount(network: &str, asset: &str, amount: &str) -> (String, String) {
+fn format_dry_run_amount(network: &str, asset: &str, amount: &str) -> Result<(String, String)> {
     // Try to get token info from registry
     if let Ok(decimals) = purl_lib::constants::get_token_decimals(network, asset) {
         let symbol = purl_lib::constants::get_token_symbol(network, asset).unwrap_or(asset);
-        let amount_u128: u128 = amount.parse().unwrap_or(0);
+        let amount_u128 = parse_display_amount(amount)?;
         let divisor = 10u128.pow(decimals as u32);
         let whole = amount_u128 / divisor;
         let frac = amount_u128 % divisor;
@@ -262,10 +262,10 @@ fn format_dry_run_amount(network: &str, asset: &str, amount: &str) -> (String, S
             format!("{whole}.{trimmed}")
         };
 
-        (amount_str, symbol.to_string())
+        Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw values
-        (format!("{} (atomic)", amount), asset.to_string())
+        Ok((format!("{} (atomic)", amount), asset.to_string()))
     }
 }
 
@@ -283,7 +283,7 @@ fn confirm_payment(config: &Config, challenge: &dyn PaymentChallenge) -> Result<
     }
 
     // Format the amount for display
-    let (amount_display, asset_symbol) = format_payment_amount(challenge);
+    let (amount_display, asset_symbol) = format_payment_amount(challenge)?;
 
     // Get sender address if available
     let from_address = get_sender_address(config, challenge);
@@ -321,14 +321,14 @@ fn confirm_payment(config: &Config, challenge: &dyn PaymentChallenge) -> Result<
 }
 
 /// Format the payment amount for display
-fn format_payment_amount(challenge: &dyn PaymentChallenge) -> (String, String) {
+fn format_payment_amount(challenge: &dyn PaymentChallenge) -> Result<(String, String)> {
     let amount_str_raw = challenge.amount();
     let asset = challenge.asset();
     let network = challenge.network();
 
     // Try to get decimals for the asset from the centralized token registry
     if let Ok(decimals) = purl_lib::constants::get_token_decimals(network, asset) {
-        let amount_u128: u128 = amount_str_raw.parse().unwrap_or(0);
+        let amount_u128 = parse_display_amount(amount_str_raw)?;
         let divisor = 10u128.pow(decimals as u32);
         let whole = amount_u128 / divisor;
         let frac = amount_u128 % divisor;
@@ -345,12 +345,19 @@ fn format_payment_amount(challenge: &dyn PaymentChallenge) -> (String, String) {
             )
         };
 
-        (amount_str, symbol.to_string())
+        Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw amount
         let amount_str = format!("{} (atomic units)", amount_str_raw);
-        (amount_str, truncate_address(asset, 20))
+        Ok((amount_str, truncate_address(asset, 20)))
     }
+}
+
+/// Parse an atomic amount for display without silently substituting another value.
+fn parse_display_amount(amount: &str) -> Result<u128> {
+    amount
+        .parse::<u128>()
+        .with_context(|| format!("The server provided an invalid payment amount: {amount:?}"))
 }
 
 /// Get the sender address from config

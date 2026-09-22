@@ -7,7 +7,7 @@ use crate::error::{PurlError, Result};
 use crate::http::HttpResponse;
 use crate::protocol::{CredentialPayload, PaymentChallenge, PaymentProtocol};
 
-use super::policy::{decode_and_validate, require_recipient};
+use super::policy::{decode_and_validate, require_amount, require_recipient, tempo_chain_id};
 use super::MppChallenge;
 
 /// Protocol name constant for MPP
@@ -134,11 +134,7 @@ fn convert_mpp_to_x402(challenge: &mpp::PaymentChallenge) -> Result<serde_json::
     let request = decode_and_validate(challenge)?;
 
     // Extract fields from the request
-    let amount = request
-        .get("amount")
-        .and_then(|v| v.as_str())
-        .unwrap_or("0")
-        .to_string();
+    let amount = require_amount(&request)?.to_string();
     let currency = request
         .get("currency")
         .and_then(|v| v.as_str())
@@ -147,11 +143,7 @@ fn convert_mpp_to_x402(challenge: &mpp::PaymentChallenge) -> Result<serde_json::
     let recipient = require_recipient(&request)?.to_string();
 
     // Get chain ID from methodDetails if available
-    let chain_id = request
-        .get("methodDetails")
-        .and_then(|md| md.get("chainId"))
-        .and_then(|v| v.as_u64())
-        .unwrap_or(42431); // Default to Tempo Moderato
+    let chain_id = tempo_chain_id(&request)?;
 
     let network = format!("eip155:{}", chain_id);
 

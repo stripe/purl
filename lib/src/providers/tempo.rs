@@ -40,11 +40,11 @@ impl TempoProvider {
 
     /// Require a native MPP challenge and reject semantics purl cannot safely show.
     ///
-    /// `MppChallenge::recipient` is a snapshot taken when the challenge was parsed, but
-    /// the signer pays from `inner` — mpp-rs re-decodes the request itself. Comparing the
-    /// two here makes "what purl displayed is what purl signs" an enforced invariant
-    /// rather than a coincidence of both sides reading the same field.
-    fn validate_challenge(challenge: &dyn PaymentChallenge) -> Result<&MppChallenge> {
+    /// `MppChallenge` contains snapshots taken when the challenge was parsed, but the
+    /// signer pays from `inner` — mpp-rs re-decodes the request itself. Comparing the
+    /// security-sensitive fields here makes "what purl displayed is what purl signs" an
+    /// enforced invariant rather than a coincidence of both sides reading the same data.
+    fn validate_challenge(challenge: &dyn PaymentChallenge) -> Result<(&MppChallenge, u64)> {
         let mpp_challenge = challenge
             .as_any()
             .downcast_ref::<MppChallenge>()
@@ -54,6 +54,8 @@ impl TempoProvider {
 
         let request = crate::mpp::policy::decode_and_validate(&mpp_challenge.inner)?;
         let signed_recipient = crate::mpp::policy::require_recipient(&request)?;
+        let signed_amount = crate::mpp::policy::require_amount(&request)?;
+        let signed_chain_id = crate::mpp::policy::tempo_chain_id(&request)?;
 
         if signed_recipient != mpp_challenge.recipient {
             return Err(PurlError::invalid_address(format!(
@@ -62,7 +64,22 @@ impl TempoProvider {
             )));
         }
 
-        Ok(mpp_challenge)
+        if signed_amount != mpp_challenge.amount {
+            return Err(PurlError::InvalidAmount(format!(
+                "MPP challenge amount mismatch: purl would display {} but the challenge pays {}",
+                mpp_challenge.amount, signed_amount
+            )));
+        }
+
+        let signed_network = format!("eip155:{signed_chain_id}");
+        if signed_network != mpp_challenge.network {
+            return Err(PurlError::InvalidConfig(format!(
+                "MPP challenge network mismatch: purl would display {} but the challenge pays {}",
+                mpp_challenge.network, signed_network
+            )));
+        }
+
+        Ok((mpp_challenge, signed_chain_id))
     }
 }
 
@@ -82,7 +99,7 @@ impl PaymentProvider for TempoProvider {
         // Require and validate the native challenge before loading a wallet or signing.
         // MppChallenge fields are public, so callers can construct one without using
         // the protocol parser that normally performs this validation.
-        let mpp_challenge = Self::validate_challenge(challenge)?;
+        let (mpp_challenge, expected_chain_id) = Self::validate_challenge(challenge)?;
 
         // Resolve RPC URL from network registry based on the challenge's network
         let rpc_url = get_network(challenge.network())
@@ -92,10 +109,11 @@ impl PaymentProvider for TempoProvider {
         let signer = Self::load_signer(config)?;
 
         // Create mpp-rs TempoProvider
-        let mpp_provider =
-            mpp::client::TempoProvider::new(signer.clone(), &rpc_url).map_err(|e| {
+        let mpp_provider = mpp::client::TempoProvider::new(signer.clone(), &rpc_url)
+            .map_err(|e| {
                 PurlError::InvalidConfig(format!("Failed to create Tempo provider: {}", e))
-            })?;
+            })?
+            .with_expected_chain_id(expected_chain_id);
 
         // Execute payment using native MPP challenge
         use mpp::client::PaymentProvider as MppPaymentProvider;
@@ -303,6 +321,53 @@ mod tests {
         );
 
         assert_both_paths_reject(&challenge, "recipient mismatch").await;
+    }
+
+    #[tokio::test]
+    async fn test_rejects_challenge_whose_displayed_amount_is_not_the_signed_one() {
+        let mut challenge = hand_built_challenge(
+            serde_json::json!({
+                "amount": "1000000000",
+                "currency": "pathUSD",
+                "recipient": "0x1111111111111111111111111111111111111111",
+                "methodDetails": { "chainId": 42431 }
+            }),
+            "0x1111111111111111111111111111111111111111",
+        );
+        challenge.amount = "0".to_string();
+
+        assert_both_paths_reject(&challenge, "amount mismatch").await;
+    }
+
+    #[tokio::test]
+    async fn test_rejects_challenge_whose_displayed_network_is_not_the_signed_one() {
+        let mut challenge = hand_built_challenge(
+            serde_json::json!({
+                "amount": "1000000",
+                "currency": "pathUSD",
+                "recipient": "0x1111111111111111111111111111111111111111",
+                "methodDetails": { "chainId": 4217 }
+            }),
+            "0x1111111111111111111111111111111111111111",
+        );
+        challenge.network = "eip155:42431".to_string();
+
+        assert_both_paths_reject(&challenge, "network mismatch").await;
+    }
+
+    #[tokio::test]
+    async fn test_rejects_hex_amount_before_loading_a_wallet_or_signing() {
+        let challenge = hand_built_challenge(
+            serde_json::json!({
+                "amount": "0x3B9ACA00",
+                "currency": "pathUSD",
+                "recipient": "0x1111111111111111111111111111111111111111",
+                "methodDetails": { "chainId": 42431, "feePayer": true }
+            }),
+            "0x1111111111111111111111111111111111111111",
+        );
+
+        assert_both_paths_reject(&challenge, "Invalid amount").await;
     }
 
     #[tokio::test]
