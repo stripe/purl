@@ -12,12 +12,58 @@ use crate::error::{PurlError, Result};
 
 use super::challenge::decode_request;
 
+/// Tempo Moderato is purl's default when a challenge omits `chainId`.
+///
+/// Keep this default in one place and pin the signer to the resolved value. Without
+/// the pin, mpp-rs uses its own (mainnet) default for the same missing field.
+pub(crate) const DEFAULT_TEMPO_CHAIN_ID: u64 = 42431;
+
 /// Decode a challenge's request payload and apply purl's display-safety rules.
 pub(crate) fn decode_and_validate(challenge: &mpp::PaymentChallenge) -> Result<serde_json::Value> {
     let request = decode_request(challenge)?;
     reject_undisclosed_transfers(challenge, &request)?;
     require_recipient(&request)?;
+    require_amount(&request)?;
+    if challenge.method.as_str() == "tempo" {
+        tempo_chain_id(&request)?;
+    }
     Ok(request)
+}
+
+/// Read an amount that every purl payment view can faithfully represent.
+///
+/// MPP amounts are decimal strings in atomic units. In particular, accepting a
+/// second syntax here (such as a hex string accepted by a downstream signer)
+/// would let the display and signing paths interpret the same input differently.
+pub(crate) fn require_amount(request: &serde_json::Value) -> Result<&str> {
+    let amount = request
+        .get("amount")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| PurlError::MissingRequirement("amount".to_string()))?;
+
+    if amount.is_empty()
+        || !amount.bytes().all(|byte| byte.is_ascii_digit())
+        || amount.parse::<u128>().is_err()
+    {
+        return Err(PurlError::InvalidAmount(amount.to_string()));
+    }
+
+    Ok(amount)
+}
+
+/// Resolve the Tempo chain purl displays and later pins in mpp-rs.
+pub(crate) fn tempo_chain_id(request: &serde_json::Value) -> Result<u64> {
+    match request
+        .get("methodDetails")
+        .and_then(|details| details.get("chainId"))
+    {
+        Some(chain_id) => chain_id.as_u64().ok_or_else(|| {
+            PurlError::Http(
+                "Invalid Tempo methodDetails.chainId: expected an unsigned integer".to_string(),
+            )
+        }),
+        None => Ok(DEFAULT_TEMPO_CHAIN_ID),
+    }
 }
 
 /// Reject challenges that move funds purl would not name in the payment view.
@@ -94,6 +140,49 @@ mod tests {
             require_recipient(&request).unwrap(),
             "0x1111111111111111111111111111111111111111"
         );
+        assert_eq!(require_amount(&request).unwrap(), "1000000");
+        assert_eq!(tempo_chain_id(&request).unwrap(), DEFAULT_TEMPO_CHAIN_ID);
+    }
+
+    #[test]
+    fn test_rejects_amounts_the_display_cannot_represent() {
+        for amount in [
+            serde_json::Value::Null,
+            serde_json::json!(1000000),
+            serde_json::json!(""),
+            serde_json::json!("0x3B9ACA00"),
+            serde_json::json!("340282366920938463463374607431768211456"),
+        ] {
+            let challenge = challenge_with(
+                "tempo",
+                serde_json::json!({
+                    "amount": amount,
+                    "recipient": "0x1111111111111111111111111111111111111111"
+                }),
+            );
+            let error = decode_and_validate(&challenge).unwrap_err();
+            assert!(
+                matches!(
+                    error,
+                    PurlError::InvalidAmount(_) | PurlError::MissingRequirement(_)
+                ),
+                "unexpected error: {error}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_tempo_chain_id_uses_one_validated_default() {
+        let absent = serde_json::json!({});
+        assert_eq!(tempo_chain_id(&absent).unwrap(), DEFAULT_TEMPO_CHAIN_ID);
+
+        let explicit = serde_json::json!({ "methodDetails": { "chainId": 4217 } });
+        assert_eq!(tempo_chain_id(&explicit).unwrap(), 4217);
+
+        let malformed = serde_json::json!({
+            "methodDetails": { "chainId": "not-a-number" }
+        });
+        assert!(tempo_chain_id(&malformed).is_err());
     }
 
     #[test]
