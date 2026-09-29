@@ -13,7 +13,9 @@ use std::io::IsTerminal;
 ///
 /// Terminals that don't support this will just show TEXT.
 pub fn hyperlink(url: &str, text: &str) -> String {
-    format!("\x1B]8;;{}\x07{}\x1B]8;;\x07", url, text)
+    let safe_url = crate::terminal::sanitize(url);
+    let safe_text = crate::terminal::sanitize(text);
+    format!("\x1B]8;;{safe_url}\x07{safe_text}\x1B]8;;\x07")
 }
 
 /// Format a clickable hyperlink only when terminal decoration is appropriate.
@@ -32,7 +34,7 @@ pub fn terminal_hyperlink(url: &str, text: &str) -> String {
     if supports_hyperlinks() {
         hyperlink(url, text)
     } else {
-        text.to_string()
+        crate::terminal::sanitize(text)
     }
 }
 
@@ -45,7 +47,7 @@ pub fn tx_link(tx_hash: &str, network: &str) -> String {
             return terminal_hyperlink(&url, tx_hash);
         }
     }
-    tx_hash.to_string()
+    crate::terminal::sanitize(tx_hash)
 }
 
 /// Format an address as a hyperlink if network supports it.
@@ -57,7 +59,7 @@ pub fn address_link(address: &str, network: &str) -> String {
             return terminal_hyperlink(&url, address);
         }
     }
-    address.to_string()
+    crate::terminal::sanitize(address)
 }
 
 /// Format a wallet address as a clickable hyperlink using a default network for the chain type.
@@ -84,6 +86,18 @@ mod tests {
         assert!(link.contains("click me"));
         assert!(link.starts_with("\x1B]8;;"));
         assert!(link.ends_with("\x1B]8;;\x07"));
+    }
+
+    #[test]
+    fn test_hyperlink_sanitizes_osc_injection() {
+        let link = hyperlink(
+            "https://example.com/\x07malicious",
+            "safe\x1b]8;;https://evil.example\x07spoofed",
+        );
+        assert_eq!(
+            link,
+            "\x1B]8;;https://example.com/malicious\x07safe]8;;https://evil.examplespoofed\x1B]8;;\x07"
+        );
     }
 
     #[test]
@@ -131,6 +145,15 @@ mod tests {
     fn test_tx_link_unknown_network() {
         let link = tx_link("0x123", "unknown-network");
         assert_eq!(link, "0x123");
+    }
+
+    #[test]
+    fn test_unknown_network_link_sanitizes_text() {
+        assert_eq!(
+            address_link("safe\x1b[2Jaddress", "unknown"),
+            "safe[2Jaddress"
+        );
+        assert_eq!(tx_link("hash\x07spoof", "unknown"), "hashspoof");
     }
 
     #[test]
