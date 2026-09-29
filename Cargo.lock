@@ -330,7 +330,7 @@ dependencies = [
  "alloy-rlp",
  "borsh",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4999,7 +4999,7 @@ dependencies = [
 
 [[package]]
 name = "purl"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "alloy",
  "alloy-provider",
@@ -5037,7 +5037,7 @@ dependencies = [
 
 [[package]]
 name = "purl-lib"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "aes 0.9.0",
  "alloy",
