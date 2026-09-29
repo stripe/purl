@@ -4215,9 +4215,9 @@ dependencies = [
 
 [[package]]
 name = "mpp"
-version = "0.12.0"
+version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9126411393e8ead5b0a9d99df1c3806f3dfc0ab648d2188745f6d97d03ba83d"
+checksum = "68f900d8263b005534888ee4c86b2e97b126351eb52b96fd5ce2ef16d29e5932"
 dependencies = [
  "alloy",
  "async-trait",
@@ -8930,7 +8930,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
