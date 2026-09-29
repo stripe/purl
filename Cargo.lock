@@ -330,7 +330,7 @@ dependencies = [
  "alloy-rlp",
  "borsh",
  "serde",
- "thiserror 2.0.20",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -2091,7 +2091,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "once_cell",
  "p256 0.14.0",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",
  "sha2 0.11.0",
@@ -2173,7 +2173,7 @@ dependencies = [
  "hashbrown 0.17.1",
  "num-traits",
  "pin-project",
- "rand 0.10.2",
+ "rand 0.10.3",
  "thiserror 2.0.21",
  "zeroize",
 ]
@@ -4240,7 +4240,7 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "p256 0.13.2",
- "rand 0.10.2",
+ "rand 0.10.3",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -5019,7 +5019,7 @@ dependencies = [
  "http 1.5.0",
  "predicates",
  "purl-lib",
- "rand 0.10.2",
+ "rand 0.10.3",
  "secp256k1 0.31.1",
  "serde",
  "serde_json",
@@ -5053,7 +5053,7 @@ dependencies = [
  "hex",
  "mpp",
  "once_cell",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_core 0.6.4",
  "remain",
  "reqwest 0.13.5",
@@ -5118,7 +5118,7 @@ dependencies = [
  "fastbloom",
  "getrandom 0.4.3",
  "lru-slab",
- "rand 0.10.2",
+ "rand 0.10.3",
  "rand_pcg",
  "ring",
  "rustc-hash",
@@ -5198,9 +5198,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.10.2"
+version = "0.10.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f5fa3a058cd35567ef9bfa5e75732bee0f9e4c55fa90477bef2dfcdbc4be80"
+checksum = "65c9fb96cbc91e3478eaae79a69fcd3f1ae4ad052e471fe6732fff548984b4af"
 dependencies = [
  "chacha20",
  "getrandom 0.4.3",
@@ -8945,7 +8945,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
