@@ -15,6 +15,7 @@ mod output;
 mod payment;
 mod request;
 mod table;
+mod terminal;
 mod wallet_commands;
 
 use anyhow::{Context, Result};
@@ -260,11 +261,7 @@ async fn make_request(cli: Cli) -> Result<()> {
 
                                 let canonical_network =
                                     purl_lib::network::resolve_network_alias(&network_str);
-                                let network_display = if canonical_network.is_empty() {
-                                    network_str.clone()
-                                } else {
-                                    canonical_network.to_string()
-                                };
+                                let network_display = terminal::sanitize(canonical_network);
 
                                 (
                                     required_amount,
@@ -315,11 +312,7 @@ async fn show_status_and_help() {
 
         if let Some(evm) = &config.evm {
             if let Ok(address) = evm.get_address() {
-                let short_addr = if address.len() > 12 {
-                    format!("{}...{}", &address[..6], &address[address.len() - 4..])
-                } else {
-                    address.clone()
-                };
+                let short_addr = terminal::truncate_middle(&address, 12, 6, 4);
                 // Create clickable link with short display text
                 let linked_short = if let Some(url) =
                     purl_lib::network::get_network("base").and_then(|n| n.address_url(&address))
@@ -338,11 +331,7 @@ async fn show_status_and_help() {
 
         if let Some(solana) = &config.solana {
             if let Ok(pubkey) = solana.get_address() {
-                let short_key = if pubkey.len() > 12 {
-                    format!("{}...{}", &pubkey[..6], &pubkey[pubkey.len() - 4..])
-                } else {
-                    pubkey.clone()
-                };
+                let short_key = terminal::truncate_middle(&pubkey, 12, 6, 4);
                 // Create clickable link with short display text
                 let linked_short = if let Some(url) =
                     purl_lib::network::get_network("solana").and_then(|n| n.address_url(&pubkey))
@@ -683,12 +672,7 @@ fn get_token_symbol(network: &str, asset: &str) -> String {
     purl_lib::constants::get_token_symbol(network, asset)
         .map(|s| s.to_string())
         .unwrap_or_else(|| {
-            // Fallback to truncated address if symbol not found
-            if asset.len() > 10 {
-                format!("{}...{}", &asset[..6], &asset[asset.len() - 4..])
-            } else {
-                asset.to_string()
-            }
+            crate::terminal::truncate_middle(&crate::terminal::sanitize(asset), 10, 6, 4)
         })
 }
 
@@ -727,6 +711,14 @@ mod tests {
         // No wallets configured, so evm and solana should be null
         assert!(display.get("evm").unwrap().is_null());
         assert!(display.get("solana").unwrap().is_null());
+    }
+
+    #[test]
+    fn test_get_token_symbol_handles_untrusted_multibyte_asset() {
+        assert_eq!(
+            get_token_symbol("unknown", "0x12…456789\x1b[2J"),
+            "0x12…4...9[2J"
+        );
     }
 
     #[test]

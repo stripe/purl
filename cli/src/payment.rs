@@ -11,6 +11,7 @@ use purl_lib::{
 use crate::cli::Cli;
 use crate::exit_codes::ExitCode;
 use crate::request::RequestContext;
+use crate::terminal::{sanitize, truncate_end, truncate_middle};
 
 /// Handle payment required (402) response
 pub async fn handle_payment_request(
@@ -28,21 +29,25 @@ pub async fn handle_payment_request(
         for (i, challenge) in challenges.iter().enumerate() {
             eprintln!();
             eprintln!("  Option {}:", i + 1);
-            eprintln!("    Protocol:    {}", challenge.protocol_name());
-            eprintln!("    Scheme:      {}", challenge.scheme());
-            eprintln!("    Network:     {}", challenge.network());
+            eprintln!("    Protocol:    {}", sanitize(challenge.protocol_name()));
+            eprintln!("    Scheme:      {}", sanitize(challenge.scheme()));
+            eprintln!("    Network:     {}", sanitize(challenge.network()));
 
             // Format amount with human-readable display
             let (amount_display, asset_symbol) = format_challenge_amount(challenge.as_ref())?;
             eprintln!("    Amount:      {}", amount_display);
-            eprintln!("    Asset:       {} ({})", asset_symbol, challenge.asset());
-            eprintln!("    Recipient:   {}", challenge.recipient());
+            eprintln!(
+                "    Asset:       {} ({})",
+                asset_symbol,
+                sanitize(challenge.asset())
+            );
+            eprintln!("    Recipient:   {}", sanitize(challenge.recipient()));
 
             if !challenge.description().is_empty() {
-                eprintln!("    Description: {}", challenge.description());
+                eprintln!("    Description: {}", sanitize(challenge.description()));
             }
             if !challenge.resource().is_empty() {
-                eprintln!("    Resource:    {}", challenge.resource());
+                eprintln!("    Resource:    {}", sanitize(challenge.resource()));
             }
 
             // Show MPP-specific details if available
@@ -51,7 +56,7 @@ pub async fn handle_payment_request(
                     .as_any()
                     .downcast_ref::<purl_lib::mpp::MppChallenge>()
                 {
-                    eprintln!("    Challenge ID: {}", mpp_challenge.inner.id);
+                    eprintln!("    Challenge ID: {}", sanitize(&mpp_challenge.inner.id));
                     eprintln!("    Method:      {}", mpp_challenge.inner.method.as_str());
                 }
             }
@@ -70,8 +75,8 @@ pub async fn handle_payment_request(
         let (amount_display, _) = format_challenge_amount(selected)?;
         eprintln!(
             "Selected: {} on {} for {} (protocol: {})",
-            selected.scheme(),
-            selected.network(),
+            sanitize(selected.scheme()),
+            sanitize(selected.network()),
             amount_display,
             protocol.name()
         );
@@ -104,7 +109,7 @@ pub async fn handle_payment_request(
                 let (header_name, header_value) = protocol.create_credential_header(&credential);
                 eprintln!(
                     "{header_name} header: {}",
-                    truncate_for_display(&header_value, 80)
+                    truncate_for_display(&sanitize(&header_value), 80)
                 );
             }
         } else {
@@ -141,7 +146,7 @@ pub async fn handle_payment_request(
                     || key_lower.contains("x-")
                     || key_lower == "www-authenticate"
                 {
-                    eprintln!("  {}: {}", key, value);
+                    eprintln!("  {}: {}", sanitize(key), sanitize(value));
                 }
             }
 
@@ -153,20 +158,12 @@ pub async fn handle_payment_request(
                         if let Ok(pretty) = serde_json::to_string_pretty(&json) {
                             eprintln!("Response body:");
                             // Limit output to first 2000 chars
-                            if pretty.len() > 2000 {
-                                eprintln!("{}...", &pretty[..2000]);
-                            } else {
-                                eprintln!("{}", pretty);
-                            }
+                            eprintln!("{}", truncate_for_display(&sanitize(&pretty), 2000));
                         }
                     } else {
                         // Not JSON, show as-is (truncated)
                         eprintln!("Response body:");
-                        if body_str.len() > 500 {
-                            eprintln!("{}...", &body_str[..500]);
-                        } else {
-                            eprintln!("{}", body_str);
-                        }
+                        eprintln!("{}", truncate_for_display(&sanitize(body_str), 500));
                     }
                 }
             }
@@ -198,18 +195,21 @@ fn handle_dry_run(config: &Config, challenge: &dyn PaymentChallenge) -> Result<H
         )?;
 
         println!("[DRY RUN] Payment would be made:");
-        println!("Provider: {}", dry_run_info.provider);
-        println!("Network: {}", dry_run_info.network);
+        println!("Provider: {}", sanitize(&dry_run_info.provider));
+        println!("Network: {}", sanitize(&dry_run_info.network));
         println!("Amount: {} {}", amount_display, asset_display);
         println!("From: {}", from_display);
         println!("To: {}", to_display);
         if let Some(fee) = dry_run_info.estimated_fee {
-            println!("Estimated Fee: {fee}");
+            println!("Estimated Fee: {}", sanitize(&fee));
         }
 
         anyhow::bail!("Dry run completed");
     } else {
-        anyhow::bail!("No provider found for network: {}", challenge.network());
+        anyhow::bail!(
+            "No provider found for network: {}",
+            sanitize(challenge.network())
+        );
     }
 }
 
@@ -239,7 +239,7 @@ fn format_challenge_amount(challenge: &dyn PaymentChallenge) -> Result<(String, 
         Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw values
-        Ok((format!("{} (atomic)", amount), asset.to_string()))
+        Ok((format!("{} (atomic)", sanitize(amount)), sanitize(asset)))
     }
 }
 
@@ -265,7 +265,7 @@ fn format_dry_run_amount(network: &str, asset: &str, amount: &str) -> Result<(St
         Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw values
-        Ok((format!("{} (atomic)", amount), asset.to_string()))
+        Ok((format!("{} (atomic)", sanitize(amount)), sanitize(asset)))
     }
 }
 
@@ -289,7 +289,7 @@ fn confirm_payment(config: &Config, challenge: &dyn PaymentChallenge) -> Result<
     let from_address = get_sender_address(config, challenge);
 
     // Format addresses with hyperlinks
-    let to_truncated = truncate_address(challenge.recipient(), 45);
+    let to_truncated = truncate_address(&sanitize(challenge.recipient()), 45);
     let to_display = address_link(&to_truncated, challenge.network());
 
     // Print payment details
@@ -299,7 +299,7 @@ fn confirm_payment(config: &Config, challenge: &dyn PaymentChallenge) -> Result<
     eprintln!("├─────────────────────────────────────────────────────────────┤");
     eprintln!("│  Amount:    {:<47} │", amount_display);
     eprintln!("│  Asset:     {:<47} │", asset_symbol);
-    eprintln!("│  Network:   {:<47} │", challenge.network());
+    eprintln!("│  Network:   {:<47} │", sanitize(challenge.network()));
     eprintln!("│  To:        {:<47} │", to_display);
     if let Some(ref from) = from_address {
         let from_truncated = truncate_address(from, 45);
@@ -348,8 +348,8 @@ fn format_payment_amount(challenge: &dyn PaymentChallenge) -> Result<(String, St
         Ok((amount_str, symbol.to_string()))
     } else {
         // Fallback to raw amount
-        let amount_str = format!("{} (atomic units)", amount_str_raw);
-        Ok((amount_str, truncate_address(asset, 20)))
+        let amount_str = format!("{} (atomic units)", sanitize(amount_str_raw));
+        Ok((amount_str, truncate_address(&sanitize(asset), 20)))
     }
 }
 
@@ -377,22 +377,12 @@ fn get_sender_address(config: &Config, challenge: &dyn PaymentChallenge) -> Opti
 
 /// Truncate an address for display
 fn truncate_address(addr: &str, max_len: usize) -> String {
-    if addr.len() <= max_len {
-        addr.to_string()
-    } else {
-        let prefix = &addr[..6];
-        let suffix = &addr[addr.len() - 4..];
-        format!("{prefix}...{suffix}")
-    }
+    truncate_middle(addr, max_len, 6, 4)
 }
 
 /// Truncate a string for display with ellipsis
 fn truncate_for_display(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max_len])
-    }
+    truncate_end(s, max_len)
 }
 
 /// Display settlement information from response
@@ -412,14 +402,14 @@ fn display_settlement_info(
             eprintln!("Payment settled:");
             let tx_display = tx_link(settlement.transaction(), settlement.network());
             eprintln!("Transaction: {}", tx_display);
-            eprintln!("Network: {}", settlement.network());
+            eprintln!("Network: {}", sanitize(settlement.network()));
             eprintln!("Success: {}", settlement.is_success());
             if let Some(payer) = settlement.payer() {
                 let payer_display = address_link(payer, settlement.network());
                 eprintln!("Payer: {}", payer_display);
             }
             if let Some(reason) = settlement.error_reason() {
-                eprintln!("Error: {reason}");
+                eprintln!("Error: {}", sanitize(reason));
             }
         }
     }
@@ -455,6 +445,24 @@ async fn create_payment_payload(
     if let Some(provider) = registry.find_provider(challenge.network()) {
         Ok(provider.create_payment(challenge, config).await?)
     } else {
-        anyhow::bail!("No provider found for network: {}", challenge.network());
+        anyhow::bail!(
+            "No provider found for network: {}",
+            sanitize(challenge.network())
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_address_handles_multibyte_input() {
+        assert_eq!(truncate_address("0x12…456789", 8), "0x12…4...6789");
+    }
+
+    #[test]
+    fn truncate_for_display_handles_multibyte_input() {
+        assert_eq!(truncate_for_display("abçdéf", 4), "abçd...");
     }
 }
