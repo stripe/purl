@@ -229,7 +229,19 @@ async fn make_request(cli: Cli) -> Result<()> {
         anyhow::bail!("Failed to parse payment challenges from any protocol");
     }
 
-    let response = handle_payment_request(&config, &request_ctx, url, challenges).await?;
+    // Send the credential only to the URL that issued the challenge. With -L this may
+    // differ from the URL the user supplied.
+    let challenge_url = response.url.clone();
+    if challenge_url != *url && request_ctx.cli.is_verbose() && request_ctx.cli.should_show_output()
+    {
+        eprintln!(
+            "Payment challenge issued by redirected URL: {}",
+            terminal::sanitize(&challenge_url)
+        );
+    }
+
+    let response =
+        handle_payment_request(&config, &request_ctx, &challenge_url, challenges).await?;
 
     // If still 402 after payment attempt, check for specific error codes
     if response.is_payment_required() {

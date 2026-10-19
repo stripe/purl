@@ -27,6 +27,8 @@ fn client_user_agent<'a>(
 #[derive(Debug)]
 pub struct HttpResponse {
     pub status_code: u32,
+    /// The final URL that produced this response, after any redirects were followed.
+    pub url: String,
     pub headers: HashMap<String, String>,
     pub body: Vec<u8>,
 }
@@ -71,6 +73,7 @@ pub struct HttpClientBuilder {
     verbose: bool,
     timeout: Option<u64>,
     follow_redirects: bool,
+    same_origin_redirects_only: bool,
     user_agent: Option<String>,
     headers: Vec<(String, String)>,
 }
@@ -99,6 +102,16 @@ impl HttpClientBuilder {
         self
     }
 
+    /// Restrict redirect following to the origin (scheme, host, port) of the initial URL.
+    ///
+    /// Cross-origin redirects are not followed; the redirect response is returned as-is.
+    /// Use this for requests that carry payment credentials, which must never be sent to
+    /// an origin other than the one that issued the payment challenge.
+    pub fn same_origin_redirects_only(mut self, same_origin_only: bool) -> Self {
+        self.same_origin_redirects_only = same_origin_only;
+        self
+    }
+
     /// Set custom User-Agent header.
     pub fn user_agent(mut self, ua: impl Into<String>) -> Self {
         self.user_agent = Some(ua.into());
@@ -119,7 +132,9 @@ impl HttpClientBuilder {
 
     /// Build the configured HTTP client.
     pub fn build(self) -> Result<HttpClient> {
-        let redirect_policy = if self.follow_redirects {
+        let redirect_policy = if self.follow_redirects && self.same_origin_redirects_only {
+            same_origin_redirect_policy()
+        } else if self.follow_redirects {
             reqwest::redirect::Policy::default()
         } else {
             reqwest::redirect::Policy::none()
@@ -152,6 +167,25 @@ impl HttpClientBuilder {
             verbose: self.verbose,
         })
     }
+}
+
+/// Maximum number of redirects to follow, matching reqwest's default policy.
+const MAX_REDIRECTS: usize = 10;
+
+fn same_origin_redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let same_origin = attempt
+            .previous()
+            .first()
+            .is_some_and(|initial| initial.origin() == attempt.url().origin());
+        if !same_origin {
+            attempt.stop()
+        } else if attempt.previous().len() > MAX_REDIRECTS {
+            attempt.error("too many redirects")
+        } else {
+            attempt.follow()
+        }
+    })
 }
 
 pub struct HttpClient {
@@ -197,6 +231,7 @@ impl HttpClient {
 
         let response = req.send().await?;
         let status_code = response.status().as_u16() as u32;
+        let final_url = response.url().to_string();
 
         let mut headers = HashMap::new();
         for (key, value) in response.headers() {
@@ -213,13 +248,14 @@ impl HttpClient {
         }
 
         if self.verbose {
-            eprintln!("< {} {}", status_code, url);
+            eprintln!("< {} {}", status_code, final_url);
         }
 
         let body = response.bytes().await?;
 
         Ok(HttpResponse {
             status_code,
+            url: final_url,
             headers,
             body: body.to_vec(),
         })
