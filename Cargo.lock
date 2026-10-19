@@ -3055,7 +3055,7 @@ dependencies = [
  "sha2 0.10.9",
  "sha3 0.10.8",
  "thiserror 1.0.69",
- "uuid 0.8.2",
+ "uuid",
 ]
 
 [[package]]
@@ -4230,9 +4230,9 @@ dependencies = [
 
 [[package]]
 name = "mpp"
-version = "0.13.0"
+version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68f900d8263b005534888ee4c86b2e97b126351eb52b96fd5ce2ef16d29e5932"
+checksum = "ea0f0dd609b04dc80d184bfeb104eed48fc3793c08affe20f7f5e6d6ba6994d6"
 dependencies = [
  "alloy",
  "async-trait",
@@ -4240,7 +4240,6 @@ dependencies = [
  "hex",
  "hmac 0.13.0",
  "p256 0.13.2",
- "rand 0.10.3",
  "reqwest 0.13.5",
  "serde",
  "serde_json",
@@ -4251,7 +4250,6 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "tokio",
- "uuid 1.22.0",
 ]
 
 [[package]]
@@ -9645,17 +9643,6 @@ checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
 dependencies = [
  "getrandom 0.2.17",
  "serde",
-]
-
-[[package]]
-name = "uuid"
-version = "1.22.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
-dependencies = [
- "getrandom 0.4.3",
- "js-sys",
- "wasm-bindgen",
 ]
 
 [[package]]
