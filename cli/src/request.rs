@@ -40,9 +40,11 @@ impl RequestContext {
             headers.extend_from_slice(extra);
         }
 
+        // Never let a credential-bearing request redirect to a different origin.
         let mut builder = HttpClientBuilder::new()
             .verbose(self.cli.is_verbose())
             .follow_redirects(self.cli.follow_redirects)
+            .same_origin_redirects_only(extra_headers.is_some())
             .headers(&headers);
 
         if let Some(timeout) = self.cli.get_timeout() {

@@ -187,6 +187,7 @@ mod tests {
         }
         HttpResponse {
             status_code: status,
+            url: "https://example.com/".to_string(),
             headers: header_map,
             body: body.as_bytes().to_vec(),
         }

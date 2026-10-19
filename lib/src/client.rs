@@ -172,9 +172,11 @@ impl PurlClient {
 
     /// Configure a new HttpClient with the common settings
     fn configure_client(&self, additional_headers: &[(String, String)]) -> Result<HttpClient> {
+        // Never let a credential-bearing request redirect to a different origin.
         let mut builder = HttpClientBuilder::new()
             .verbose(self.verbose)
             .follow_redirects(self.follow_redirects)
+            .same_origin_redirects_only(!additional_headers.is_empty())
             .headers(&self.headers)
             .headers(additional_headers);
 
@@ -242,8 +244,10 @@ impl PurlClient {
         };
         let (header_name, header_value) = protocol.create_credential_header(&credential);
         let payment_header = vec![(header_name, header_value)];
+        // Send the credential to the URL that issued the challenge, which may differ from
+        // the original URL if redirects were followed.
         let client = self.configure_client(&payment_header)?;
-        let response = client.request(method, url, data).await?;
+        let response = client.request(method, &response.url, data).await?;
 
         // Use protocol to parse the receipt
         let settlement = if let Some(receipt_json) =
