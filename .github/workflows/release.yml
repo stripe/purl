@@ -3,17 +3,33 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  verify:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check tagged commit is reachable from main
+        run: |
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::Tagged commit $GITHUB_SHA is not on main; refusing to release."
+            exit 1
+          fi
+
   build:
     name: Build (${{ matrix.target }})
+    needs: verify
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -25,10 +41,12 @@ jobs:
             target: aarch64-apple-darwin
             asset: purl-darwin-arm64
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
       - run: rustup toolchain install stable --profile minimal
       - run: rustup target add ${{ matrix.target }}
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -40,29 +58,33 @@ jobs:
       - run: cargo build --release --target ${{ matrix.target }}
       - run: strip target/${{ matrix.target }}/release/purl
       - run: mv target/${{ matrix.target }}/release/purl ${{ matrix.asset }}
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.asset }}
           path: ${{ matrix.asset }}
 
   release:
     name: Release
-    needs: build
+    needs: [verify, build]
     runs-on: ubuntu-latest
+    # Publishing requires approval via the protected `release` environment.
+    environment: release
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
           merge-multiple: true
       - name: Create or update release
         run: |
-          if gh release view ${{ github.ref_name }} &>/dev/null; then
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" &>/dev/null; then
             echo "Release already exists, uploading assets..."
-            gh release upload ${{ github.ref_name }} artifacts/* --clobber
+            gh release upload "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --clobber
           else
             echo "Creating new release..."
-            gh release create ${{ github.ref_name }} artifacts/* --generate-notes
+            gh release create "$TAG" artifacts/* --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
           fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
