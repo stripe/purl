@@ -286,36 +286,21 @@ mod tests {
 
     const TEST_EVM_KEY: &str = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-    fn make_test_requirements() -> UnifiedRequirements {
-        let req = v2::PaymentRequirements {
+    fn make_test_requirements(version: u32, timeout: u64) -> UnifiedRequirements {
+        let requirements = v2::PaymentRequirements {
             scheme: "exact".to_string(),
             network: "eip155:84532".to_string(),
             amount: "10000".to_string(),
             asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
             pay_to: "0x1111111111111111111111111111111111111111".to_string(),
-            max_timeout_seconds: 60,
+            max_timeout_seconds: timeout,
             extra: Some(serde_json::json!({"name": "USD Coin", "version": "2"})),
         };
-        let resource = v2::ResourceInfo {
+        let resource_info = v2::ResourceInfo {
             url: "https://example.com/paid".to_string(),
             description: Some("Test endpoint".to_string()),
             mime_type: Some("application/json".to_string()),
         };
-        UnifiedRequirements::V2 {
-            requirements: req,
-            resource_info: resource,
-        }
-    }
-
-    fn requirements_with_timeout(version: u32, timeout: u64) -> UnifiedRequirements {
-        let UnifiedRequirements::V2 {
-            mut requirements,
-            resource_info,
-        } = make_test_requirements()
-        else {
-            unreachable!()
-        };
-        requirements.max_timeout_seconds = timeout;
         match version {
             1 => UnifiedRequirements::V1(v1::PaymentRequirements {
                 scheme: requirements.scheme,
@@ -335,20 +320,6 @@ mod tests {
                 resource_info,
             },
             _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    fn test_authorization_expiry_boundaries() {
-        for timeout in [1, 300] {
-            assert_eq!(authorization_expiry(timeout, 1000).unwrap(), 1000 + timeout);
-        }
-        for timeout in [0, 301, 315_360_000, u64::MAX] {
-            let error = authorization_expiry(timeout, 1000).unwrap_err();
-            assert!(matches!(error, PurlError::InvalidConfig(_)));
-            assert!(error
-                .to_string()
-                .contains("unsupported EVM authorization timeout"));
         }
     }
 
@@ -374,7 +345,7 @@ mod tests {
         ];
         for version in [1, 2] {
             for timeout in [0, 301, 315_360_000, u64::MAX] {
-                let requirements = requirements_with_timeout(version, timeout);
+                let requirements = make_test_requirements(version, timeout);
                 for config in &configs {
                     let signing_error = provider
                         .create_payment(&requirements, config)
@@ -401,7 +372,7 @@ mod tests {
         let provider = EvmProvider::new();
         for version in [1, 2] {
             for timeout in [1, 300] {
-                let requirements = requirements_with_timeout(version, timeout);
+                let requirements = make_test_requirements(version, timeout);
                 let start = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -446,7 +417,7 @@ mod tests {
             evm_private_key: Some(TEST_EVM_KEY.to_string()),
             ..Default::default()
         };
-        let requirements = make_test_requirements();
+        let requirements = make_test_requirements(2, 60);
         let provider = EvmProvider::new();
 
         let info = provider
@@ -480,7 +451,7 @@ mod tests {
             password: Some("test-password".to_string()),
             ..Default::default()
         };
-        let requirements = make_test_requirements();
+        let requirements = make_test_requirements(2, 60);
         let provider = EvmProvider::new();
 
         let info = provider
