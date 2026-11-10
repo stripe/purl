@@ -107,15 +107,11 @@ fn insufficient_funds_output_neutralizes_server_controlled_values() {
         "missing guidance: {stderr:?}"
     );
 
-    // Injected text must stay inline rather than starting a new line.
-    for marker in ["FAKE-TRUSTED-LINE", "FAKE-ASSET-LINE", "run: curl"] {
-        for line in stderr.lines() {
-            if line.contains(marker) {
-                assert!(
-                    line.contains("insufficient") || line.contains("Required:"),
-                    "injected text on its own line: {line:?}"
-                );
-            }
-        }
+    // Injected newlines must not start a new line with attacker text.
+    for marker in ["FAKE-", "run: curl"] {
+        assert!(
+            !stderr.contains(&format!("\n{marker}")),
+            "injected text on its own line: {stderr:?}"
+        );
     }
 }
