@@ -4230,9 +4230,9 @@ dependencies = [
 
 [[package]]
 name = "mpp"
-version = "0.16.0"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27fc5504a309af6f89d7d1ea2247502d804affb2e072cdb60610f0d8d06d4eb7"
+checksum = "58bda4fcff8f0568c75fa9ce76c88627891db1ae5be3c5c2d7e765a8cbaffab2"
 dependencies = [
  "alloy",
  "async-trait",
