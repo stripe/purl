@@ -58,15 +58,14 @@ impl HttpResponse {
                 .ok()
                 .filter(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
                 .map(|url| url.origin())
+                .ok_or_else(|| {
+                    PurlError::Http(
+                        "Cannot verify payment origin: both URLs must be valid HTTP(S) URLs"
+                            .to_string(),
+                    )
+                })
         };
-        let original = parse_origin(original_url);
-        let payment = parse_origin(&self.url);
-        if original.is_none() || payment.is_none() {
-            return Err(PurlError::Http(
-                "Cannot verify payment origin: both URLs must be valid HTTP(S) URLs".to_string(),
-            ));
-        }
-        if original != payment {
+        if parse_origin(original_url)? != parse_origin(&self.url)? {
             return Err(PurlError::Http(
                 "Payment origin changed after redirect; cross-origin payments are not allowed. Request the intended payment destination directly.".to_string(),
             ));

@@ -21,13 +21,13 @@ async fn test_cross_origin_payment_is_rejected_before_prompting() {
     let (destination, destination_requests) = spawn_dynamic_server(|_| payment_required()).await;
     let (origin, origin_requests) =
         spawn_dynamic_server(move |_| redirect_to(&format!("{destination}/paid"))).await;
+    let temp = setup_test_config(Some(VALID_EVM_KEY), None);
     for flags in [
-        vec![],
-        vec!["--confirm"],
-        vec!["--dry-run"],
-        vec!["--max-amount", "1000000"],
+        &[][..],
+        &["--confirm"],
+        &["--dry-run"],
+        &["--max-amount", "1000000"],
     ] {
-        let temp = setup_test_config(Some(VALID_EVM_KEY), None);
         let mut command = test_command(&temp);
         command
             .args(["-L", &format!("{origin}/start")])
@@ -98,8 +98,8 @@ async fn test_same_origin_and_direct_payment_succeed() {
         }
     })
     .await;
+    let temp = setup_test_config(None, None);
     for path in ["start", "paid"] {
-        let temp = setup_test_config(None, None);
         let mut command = test_command(&temp);
         command.args([
             "-L",

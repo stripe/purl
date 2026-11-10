@@ -4,8 +4,6 @@ use purl_lib::client::PaymentResult;
 use purl_lib::{Config, HttpClientBuilder, HttpResponse, PurlClient, PurlError};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
 
 /// Spawn a loopback server that answers every request with `response` and records
 /// the raw request heads it receives.
@@ -161,24 +159,7 @@ async fn same_origin_only_does_not_forward_credentials_cross_origin() {
 async fn same_origin_only_still_follows_same_origin_redirects() {
     // A server that always redirects to itself: following must continue until the
     // redirect limit is hit, proving same-origin redirects are honored.
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let base = format!("http://{}", listener.local_addr().unwrap());
-    let hits = Arc::new(Mutex::new(0usize));
-    let counter = hits.clone();
-    let location = format!("{base}/loop");
-    tokio::spawn(async move {
-        loop {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 8192];
-            let _ = stream.read(&mut buf).await.unwrap();
-            *counter.lock().unwrap() += 1;
-            stream
-                .write_all(redirect_to(&location).as_bytes())
-                .await
-                .unwrap();
-            stream.shutdown().await.ok();
-        }
-    });
+    let (base, requests) = spawn_server(redirect_to("/loop")).await;
 
     let client = HttpClientBuilder::new()
         .follow_redirects(true)
@@ -188,5 +169,5 @@ async fn same_origin_only_still_follows_same_origin_redirects() {
     let result = client.get(&format!("{base}/start")).await;
 
     assert!(result.is_err());
-    assert!(*hits.lock().unwrap() > 1);
+    assert!(requests.lock().unwrap().len() > 1);
 }
