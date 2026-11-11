@@ -86,7 +86,7 @@ pub struct Cli {
     )]
     pub max_amount: Option<String>,
 
-    /// Require confirmation before paying
+    /// Require confirmation before paying (cross-origin payments remain prohibited)
     #[arg(long, env = "PURL_CONFIRM", help_heading = "Payment Options")]
     pub confirm: bool,
 
@@ -183,8 +183,13 @@ pub struct Cli {
     )]
     pub user_agent: Option<String>,
 
-    /// Follow redirects
-    #[arg(short = 'L', long = "location", help_heading = "HTTP Options")]
+    /// Follow redirects (does not authorize cross-origin payments)
+    #[arg(
+        short = 'L',
+        long = "location",
+        global = true,
+        help_heading = "HTTP Options"
+    )]
     pub follow_redirects: bool,
 
     /// Connection timeout in seconds

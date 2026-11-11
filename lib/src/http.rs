@@ -47,6 +47,32 @@ impl HttpResponse {
         self.status_code == 402
     }
 
+    /// Require the response to have the original request's HTTP(S) origin.
+    ///
+    /// # Errors
+    /// Returns an error if either URL is invalid, is not HTTP(S), or has a different
+    /// origin (scheme, normalized host, and effective port).
+    pub fn validate_payment_origin(&self, original_url: &str) -> Result<()> {
+        let parse_origin = |url: &str| {
+            reqwest::Url::parse(url)
+                .ok()
+                .filter(|url| matches!(url.scheme(), "http" | "https") && url.host().is_some())
+                .map(|url| url.origin())
+                .ok_or_else(|| {
+                    PurlError::Http(
+                        "Cannot verify payment origin: both URLs must be valid HTTP(S) URLs"
+                            .to_string(),
+                    )
+                })
+        };
+        if parse_origin(original_url)? != parse_origin(&self.url)? {
+            return Err(PurlError::Http(
+                "Payment origin changed after redirect; cross-origin payments are not allowed. Request the intended payment destination directly.".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
     /// Get a header value by name (case-insensitive).
     pub fn get_header(&self, name: &str) -> Option<&String> {
         self.headers.get(&name.to_lowercase())

@@ -124,6 +124,9 @@ impl PurlClient {
     }
 
     /// Enable automatic following of HTTP redirects.
+    ///
+    /// This does not authorize cross-origin payments. Payment challenges must have
+    /// the original request's origin, even in dry-run mode.
     #[must_use]
     pub fn follow_redirects(mut self) -> Self {
         self.follow_redirects = true;
@@ -204,6 +207,8 @@ impl PurlClient {
         if !response.is_payment_required() {
             return Ok(PaymentResult::Success(response));
         }
+
+        response.validate_payment_origin(url)?;
 
         // Use protocol registry to find which protocol should handle this response
         let protocol = PROTOCOL_REGISTRY

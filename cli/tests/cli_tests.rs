@@ -12,6 +12,122 @@ use std::process::Command;
 mod common;
 use common::{setup_test_config, test_command, TEST_EVM_KEY as VALID_EVM_KEY};
 
+#[path = "../../lib/tests/common/mod.rs"]
+mod redirect_server;
+
+#[tokio::test]
+async fn test_cross_origin_payment_is_rejected_before_prompting() {
+    use redirect_server::*;
+    let (destination, destination_requests) = spawn_dynamic_server(|_| payment_required()).await;
+    let (origin, origin_requests) =
+        spawn_dynamic_server(move |_| redirect_to(&format!("{destination}/paid"))).await;
+    let temp = setup_test_config(Some(VALID_EVM_KEY), None);
+    for flags in [
+        &[][..],
+        &["--confirm"],
+        &["--dry-run"],
+        &["--max-amount", "1000000"],
+    ] {
+        let mut command = test_command(&temp);
+        command
+            .args(["-L", &format!("{origin}/start")])
+            .args(flags)
+            .stdin(std::process::Stdio::null());
+        tokio::task::spawn_blocking(move || {
+            command
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("Payment origin changed"))
+                .stderr(predicate::str::contains(
+                    "Request the intended payment destination directly",
+                ))
+                .stderr(predicate::str::contains("password").not())
+                .stderr(predicate::str::contains("Proceed").not());
+        })
+        .await
+        .unwrap();
+    }
+    for requests in [origin_requests, destination_requests] {
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests.iter().all(|r| !has_payment_credential(r)));
+    }
+}
+
+#[tokio::test]
+async fn test_redirected_inspect_and_ordinary_response_remain_allowed() {
+    use redirect_server::*;
+    for inspect in [false, true] {
+        let (destination, destination_requests) = spawn_dynamic_server(move |_| {
+            if inspect {
+                payment_required()
+            } else {
+                OK.to_string()
+            }
+        })
+        .await;
+        let (origin, _) = spawn_dynamic_server(move |_| redirect_to(&destination)).await;
+        let temp = setup_test_config(None, None);
+        let mut command = test_command(&temp);
+        if inspect {
+            command.args(["inspect", "-L", &origin]);
+        } else {
+            command.args(["-L", &origin]);
+        }
+        tokio::task::spawn_blocking(move || {
+            command.assert().success();
+        })
+        .await
+        .unwrap();
+        let requests = destination_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert!(!has_payment_credential(&requests[0]));
+    }
+}
+
+#[tokio::test]
+async fn test_same_origin_and_direct_payment_succeed() {
+    use redirect_server::*;
+    let (origin, requests) = spawn_dynamic_server(|request| {
+        if request.starts_with("get /start ") {
+            redirect_to("/paid")
+        } else if has_payment_credential(request) {
+            OK.to_string()
+        } else {
+            payment_required()
+        }
+    })
+    .await;
+    let temp = setup_test_config(None, None);
+    for path in ["start", "paid"] {
+        let mut command = test_command(&temp);
+        command.args([
+            "-L",
+            "--private-key",
+            &format!("{:064x}", 1),
+            &format!("{origin}/{path}"),
+        ]);
+        tokio::task::spawn_blocking(move || {
+            command.assert().success();
+        })
+        .await
+        .unwrap();
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 5);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|r| has_payment_credential(r))
+            .count(),
+        2
+    );
+    assert!(requests
+        .iter()
+        .filter(|r| has_payment_credential(r))
+        .all(|r| r.starts_with("get /paid ")));
+}
+
 #[test]
 fn test_completions_bash() {
     Command::new(assert_cmd::cargo::cargo_bin!("purl"))

@@ -197,6 +197,8 @@ async fn make_request(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
+    response.validate_payment_origin(url)?;
+
     if request_ctx.cli.is_verbose() && request_ctx.cli.should_show_output() {
         eprintln!("402 status: payment required");
     }
