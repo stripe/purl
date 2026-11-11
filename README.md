@@ -54,6 +54,7 @@ purl <COMMAND>
 
 Run `purl help` for all commands or `purl topics` for detailed documentation.
 
+
 `-L` / `--location` follows HTTP redirects, but does not authorize payments to a
 different origin (scheme, host, or effective port). Cross-origin payment requests
 are rejected, including with `--confirm` or `--dry-run`. Request the intended

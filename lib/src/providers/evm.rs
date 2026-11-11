@@ -16,6 +16,21 @@ use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const PROVIDER_NAME: &str = "EVM";
+const MAX_AUTHORIZATION_TIMEOUT_SECONDS: u64 = 300;
+
+fn authorization_expiry(timeout_seconds: u64, now: u64) -> Result<u64> {
+    if !(1..=MAX_AUTHORIZATION_TIMEOUT_SECONDS).contains(&timeout_seconds) {
+        return Err(PurlError::InvalidConfig(format!(
+            "The server requested an unsupported EVM authorization timeout of {timeout_seconds} seconds. Expected 1..={MAX_AUTHORIZATION_TIMEOUT_SECONDS} seconds."
+        )));
+    }
+
+    now.checked_add(timeout_seconds).ok_or_else(|| {
+        PurlError::InvalidConfig(
+            "The requested EVM authorization expiry cannot be represented.".to_string(),
+        )
+    })
+}
 
 sol! {
     #[derive(Debug, Serialize, Deserialize)]
@@ -82,18 +97,18 @@ impl PaymentProvider for EvmProvider {
                 )
             })?;
 
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        let valid_before = U256::from(authorization_expiry(challenge.max_timeout_seconds(), now)?);
+
         let signer = Self::load_signer(config)?;
 
         let nonce_bytes = rand::random::<[u8; 32]>();
         let nonce = B256::from(nonce_bytes);
 
-        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-
         // Set validAfter to 10 minutes ago to account for clock skew and match
         // the official EVM client:
         // https://github.com/coinbase/x402/blob/c23d94eabec89de92b0229d7006d82097eec8b34/typescript/packages/mechanisms/evm/src/exact/client/scheme.ts#L40
         let valid_after = U256::from(now.saturating_sub(600));
-        let valid_before = U256::from(now + challenge.max_timeout_seconds());
 
         let amount: crate::x402::Amount = challenge.amount().parse().map_err(|_| {
             PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
@@ -180,6 +195,9 @@ impl PaymentProvider for EvmProvider {
     }
 
     fn dry_run(&self, challenge: &dyn PaymentChallenge, config: &Config) -> Result<DryRunInfo> {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        authorization_expiry(challenge.max_timeout_seconds(), now)?;
+
         let amount: crate::x402::Amount = challenge.amount().parse().map_err(|_| {
             PurlError::InvalidAmount("The server provided an invalid payment amount.".to_string())
         })?;
@@ -263,29 +281,132 @@ impl PaymentProvider for EvmProvider {
 mod tests {
     use super::*;
     use crate::payment_provider::PaymentProvider;
-    use crate::x402::{v2, PaymentRequirements as UnifiedRequirements};
+    use crate::x402::{v1, v2, PaymentRequirements as UnifiedRequirements};
     use serial_test::serial;
 
     const TEST_EVM_KEY: &str = "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890";
 
-    fn make_test_requirements() -> UnifiedRequirements {
-        let req = v2::PaymentRequirements {
+    fn make_test_requirements(version: u32, timeout: u64) -> UnifiedRequirements {
+        let requirements = v2::PaymentRequirements {
             scheme: "exact".to_string(),
             network: "eip155:84532".to_string(),
             amount: "10000".to_string(),
             asset: "0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string(),
             pay_to: "0x1111111111111111111111111111111111111111".to_string(),
-            max_timeout_seconds: 60,
+            max_timeout_seconds: timeout,
             extra: Some(serde_json::json!({"name": "USD Coin", "version": "2"})),
         };
-        let resource = v2::ResourceInfo {
+        let resource_info = v2::ResourceInfo {
             url: "https://example.com/paid".to_string(),
             description: Some("Test endpoint".to_string()),
             mime_type: Some("application/json".to_string()),
         };
-        UnifiedRequirements::V2 {
-            requirements: req,
-            resource_info: resource,
+        match version {
+            1 => UnifiedRequirements::V1(v1::PaymentRequirements {
+                scheme: requirements.scheme,
+                network: "base-sepolia".to_string(),
+                max_amount_required: requirements.amount,
+                asset: requirements.asset,
+                pay_to: requirements.pay_to,
+                resource: resource_info.url,
+                description: resource_info.description.unwrap(),
+                mime_type: resource_info.mime_type.unwrap(),
+                output_schema: None,
+                max_timeout_seconds: timeout,
+                extra: requirements.extra,
+            }),
+            2 => UnifiedRequirements::V2 {
+                requirements,
+                resource_info,
+            },
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn test_authorization_expiry_checked_add() {
+        assert_eq!(authorization_expiry(300, u64::MAX - 300).unwrap(), u64::MAX);
+        for (timeout, now) in [(1, u64::MAX), (300, u64::MAX - 299)] {
+            let error = authorization_expiry(timeout, now).unwrap_err();
+            assert!(matches!(error, PurlError::InvalidConfig(_)));
+            assert!(error.to_string().contains("expiry cannot be represented"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_rejected_timeouts_before_wallet_access() {
+        let provider = EvmProvider::new();
+        let configs = [
+            Config::default(),
+            Config {
+                evm_private_key: Some("invalid-key".to_string()),
+                ..Default::default()
+            },
+        ];
+        for version in [1, 2] {
+            for timeout in [0, 301, 315_360_000, u64::MAX] {
+                let requirements = make_test_requirements(version, timeout);
+                for config in &configs {
+                    let signing_error = provider
+                        .create_payment(&requirements, config)
+                        .await
+                        .unwrap_err();
+                    let preview_error = provider.dry_run(&requirements, config).unwrap_err();
+                    for error in [signing_error, preview_error] {
+                        assert!(matches!(error, PurlError::InvalidConfig(_)));
+                        assert!(error
+                            .to_string()
+                            .contains("unsupported EVM authorization timeout"));
+                    }
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_signed_authorization_lifetime_v1_and_v2() {
+        let config = Config {
+            evm_private_key: Some(TEST_EVM_KEY.to_string()),
+            ..Default::default()
+        };
+        let provider = EvmProvider::new();
+        for version in [1, 2] {
+            for timeout in [1, 300] {
+                let requirements = make_test_requirements(version, timeout);
+                let start = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                let payload = provider
+                    .create_payment(&requirements, &config)
+                    .await
+                    .unwrap();
+                let end = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                assert_eq!(payload.x402_version, version);
+                let decoded: EvmPayload =
+                    serde_json::from_value(payload.payload().clone()).unwrap();
+                let authorization = decoded.authorization;
+                let valid_before: u64 = authorization.valid_before.parse().unwrap();
+                let valid_after: u64 = authorization.valid_after.parse().unwrap();
+                let signing_time = valid_before.checked_sub(timeout).unwrap();
+                assert!((start..=end).contains(&signing_time));
+                assert!(valid_before <= end + 300);
+                assert_eq!(valid_after, signing_time.saturating_sub(600));
+                assert_eq!(authorization.value, requirements.amount());
+                assert_eq!(authorization.to, requirements.recipient());
+                assert_eq!(authorization.from, config.evm_address().unwrap());
+                assert_eq!(
+                    hex::decode(authorization.nonce.trim_start_matches("0x"))
+                        .unwrap()
+                        .len(),
+                    32
+                );
+                assert!(!decoded.signature.is_empty());
+                assert!(provider.dry_run(&requirements, &config).is_ok());
+            }
         }
     }
 
@@ -296,7 +417,7 @@ mod tests {
             evm_private_key: Some(TEST_EVM_KEY.to_string()),
             ..Default::default()
         };
-        let requirements = make_test_requirements();
+        let requirements = make_test_requirements(2, 60);
         let provider = EvmProvider::new();
 
         let info = provider
@@ -330,7 +451,7 @@ mod tests {
             password: Some("test-password".to_string()),
             ..Default::default()
         };
-        let requirements = make_test_requirements();
+        let requirements = make_test_requirements(2, 60);
         let provider = EvmProvider::new();
 
         let info = provider
