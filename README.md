@@ -54,6 +54,18 @@ purl <COMMAND>
 
 Run `purl help` for all commands or `purl topics` for detailed documentation.
 
+## EVM payment authorization lifetime
+
+For x402 v1 and v2 EVM payments, purl accepts authorization timeouts from 1 to
+300 seconds. Timeouts outside this range are rejected, including in `--dry-run`;
+purl does not clamp or rewrite the requested timeout. Servers requesting more
+than 300 seconds must update their challenges; there is no client override.
+
+The five-minute limit bounds future redeemability from the signing-time clock
+reading. The existing ten-minute `validAfter` backdating allowance for clock skew
+is unchanged. Once sent, an authorization can remain redeemable until expiry
+even if the HTTP request fails. A failed request does not cancel the authorization.
+
 ## Development
 
 ```bash
