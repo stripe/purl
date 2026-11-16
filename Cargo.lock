@@ -4998,7 +4998,7 @@ dependencies = [
 
 [[package]]
 name = "purl"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "alloy",
  "alloy-provider",
@@ -5036,7 +5036,7 @@ dependencies = [
 
 [[package]]
 name = "purl-lib"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "aes 0.9.0",
  "alloy",
