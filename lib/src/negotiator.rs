@@ -115,11 +115,9 @@ impl<'a> PaymentNegotiator<'a> {
         available_methods: &[PaymentMethod],
     ) -> bool {
         // Check network filter
+        let challenge_network = crate::network::resolve_network_alias(challenge.network());
         if !self.allowed_networks.is_empty()
-            && !self
-                .allowed_networks
-                .iter()
-                .any(|n| n == challenge.network())
+            && !self.allowed_networks.iter().any(|n| n == challenge_network)
         {
             return false;
         }
@@ -152,11 +150,9 @@ impl<'a> PaymentNegotiator<'a> {
         available_methods: &[PaymentMethod],
     ) -> bool {
         // Must pass the same network/token filters as compatibility check
+        let challenge_network = crate::network::resolve_network_alias(challenge.network());
         if !self.allowed_networks.is_empty()
-            && !self
-                .allowed_networks
-                .iter()
-                .any(|n| n == challenge.network())
+            && !self.allowed_networks.iter().any(|n| n == challenge_network)
         {
             return false;
         }
@@ -330,7 +326,7 @@ impl<'a> PaymentNegotiator<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{Config, EvmConfig};
+    use crate::config::{Config, EvmConfig, SolanaConfig};
     use crate::x402::v2;
 
     fn make_test_config() -> Config {
@@ -396,6 +392,148 @@ mod tests {
             },
             extensions: None,
         })
+    }
+
+    fn make_test_v2_challenge(network: &str, asset: &str) -> Box<dyn PaymentChallenge> {
+        Box::new(PaymentRequirements::V2 {
+            requirements: v2::PaymentRequirements {
+                scheme: "exact".to_string(),
+                network: network.to_string(),
+                amount: "1000".to_string(),
+                asset: asset.to_string(),
+                pay_to: "0x1234".to_string(),
+                max_timeout_seconds: 60,
+                extra: None,
+            },
+            resource_info: v2::ResourceInfo {
+                url: "https://example.com/api".to_string(),
+                description: None,
+                mime_type: None,
+            },
+        })
+    }
+
+    fn make_test_tempo_challenge() -> Box<dyn PaymentChallenge> {
+        use crate::mpp::MppChallenge;
+        use mpp::protocol::core::Base64UrlJson;
+
+        let request = Base64UrlJson::from_value(&serde_json::json!({
+            "amount": "1000",
+            "currency": "pathUSD",
+            "recipient": "0x1234",
+            "methodDetails": { "chainId": 42431 },
+        }))
+        .unwrap();
+        let inner = mpp::PaymentChallenge::new(
+            "test-id".to_string(),
+            "https://example.com/api",
+            "tempo",
+            "charge",
+            request,
+        );
+        Box::new(MppChallenge::from_mpp_challenge(inner).unwrap())
+    }
+
+    #[test]
+    fn test_select_challenge_network_aliases_match_x402_networks() {
+        let config = Config {
+            evm: Some(EvmConfig { keystore: None }),
+            solana: Some(SolanaConfig { keystore: None }),
+            ..Default::default()
+        };
+        let cases = [
+            (
+                Box::new(make_test_requirements().accepts().remove(0)) as Box<dyn PaymentChallenge>,
+                ["base-sepolia", "eip155:84532"],
+            ),
+            (
+                make_test_v2_challenge("eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+                ["base", "eip155:8453"],
+            ),
+            (
+                make_test_v2_challenge(
+                    "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+                    "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+                ),
+                ["solana", "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp"],
+            ),
+        ];
+
+        for (challenge, filters) in cases {
+            let challenges = vec![challenge];
+            for filter in filters {
+                let selected = PaymentNegotiator::new(&config)
+                    .with_allowed_networks(&[filter.to_string()])
+                    .select_challenge(&challenges)
+                    .unwrap_or_else(|e| panic!("Filter {filter} should match: {e}"));
+                assert_eq!(selected.network(), challenges[0].network());
+            }
+        }
+    }
+
+    #[test]
+    fn test_select_challenge_network_aliases_match_tempo_fallback() {
+        let config = make_test_config(); // EVM wallet: Tempo is a compatibility fallback.
+        let challenges = vec![make_test_tempo_challenge()];
+
+        for filter in ["tempo-moderato", "eip155:42431"] {
+            let selected = PaymentNegotiator::new(&config)
+                .with_allowed_networks(&[filter.to_string()])
+                .select_challenge(&challenges)
+                .unwrap_or_else(|e| panic!("Filter {filter} should match Tempo fallback: {e}"));
+            assert_eq!(selected.network(), "eip155:42431");
+        }
+    }
+
+    #[test]
+    fn test_select_challenge_network_aliases_preserve_direct_match_priority() {
+        let config = make_test_config();
+        // A compatible Tempo offer comes first, but the direct EVM match must win.
+        let challenges = vec![
+            make_test_tempo_challenge(),
+            make_test_v2_challenge("eip155:8453", "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+        ];
+
+        for filters in [["base", "tempo-moderato"], ["eip155:8453", "eip155:42431"]] {
+            let selected = PaymentNegotiator::new(&config)
+                .with_allowed_networks(&filters.map(str::to_string))
+                .select_challenge(&challenges)
+                .unwrap();
+            assert_eq!(selected.network(), "eip155:8453");
+            assert_eq!(selected.protocol_name(), "x402");
+        }
+    }
+
+    #[test]
+    fn test_select_challenge_network_aliases_reject_other_networks() {
+        let config = make_test_config();
+        let cases = [
+            (
+                make_test_v2_challenge(
+                    "eip155:84532",
+                    "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+                ),
+                ["base", "eip155:8453", "unknown-network"],
+            ),
+            (
+                make_test_tempo_challenge(),
+                ["tempo", "eip155:4217", "unknown-network"],
+            ),
+        ];
+
+        for (challenge, filters) in cases {
+            let challenges = vec![challenge];
+            for filter in filters {
+                let result = PaymentNegotiator::new(&config)
+                    .with_allowed_networks(&[filter.to_string()])
+                    .select_challenge(&challenges);
+                assert!(
+                    matches!(result, Err(PurlError::NoCompatibleMethod { .. })),
+                    "Filter {filter} must not match {}: {result:?}",
+                    challenges[0].network()
+                );
+            }
+        }
     }
 
     #[test]
